@@ -147,6 +147,7 @@ typedef enum {
   STYLE_NONE,
   STYLE_N64,
   STYLE_GCN,
+  STYLE_WAVEBIRD,
   STYLE_MOUSE,
   STYLE_KEYBOARD,
 } pad_style_t;
@@ -155,6 +156,7 @@ static const char *format_style(pad_style_t s) {
   switch (s) {
   case STYLE_N64:      return "N64     ";
   case STYLE_GCN:      return "GCN     ";
+  case STYLE_WAVEBIRD: return "WaveBird";
   case STYLE_MOUSE:    return "Mouse   ";
   case STYLE_KEYBOARD: return "Keyboard";
   default:             return "None    ";
@@ -310,8 +312,15 @@ static void snap_n64(pad_snap_t *out, int chan, const N64State *s) {
 }
 
 static void snap_gc(pad_snap_t *out, int p, u16 buttons) {
-  out->style = STYLE_GCN;
-  out->rumble_supported = true;  // GC controllers have built-in rumble motor
+  // libogc's SI_DecodeType test: when the wavebird-specific flag mix
+  // matches, this is an active wireless controller paired with its
+  // receiver. Otherwise it's a wired Standard GC controller.
+  u32 t = SI_GetType(p);
+  out->style = ((t & SI_GC_WAVEBIRD) == SI_GC_WAVEBIRD) ? STYLE_WAVEBIRD
+                                                       : STYLE_GCN;
+  // WaveBird ships without a rumble motor (SI_GC_NOMOTOR is set in
+  // wireless types). Standard GC controllers have it built in.
+  out->rumble_supported = !(t & SI_GC_NOMOTOR);
   out->stick_x = PAD_StickX(p);
   out->stick_y = PAD_StickY(p);
   out->cstick_x = PAD_SubStickX(p);
