@@ -117,12 +117,11 @@ static void xfb_compose_logo(u32 *fb_words, int fb_pitch_words,
   }
 }
 
-// Console column 0 sits at pixel x=20 (CONSOLE_START_POS, defined below).
-// With cropped masks (no internal padding) the bounding box left edge IS
-// the silhouette's visible edge — so placing the logo at x=20 makes its
-// left edge align exactly with the leftmost console character.
-#define CORNER_LOGO_X 20
-#define CORNER_LOGO_Y 16
+// Inset enough from the framebuffer edges to clear typical CRT overscan
+// (the outer ~5–10% of pixels are usually cut). Logo sits left of the
+// console text — the silhouette's left edge is at x=CORNER_LOGO_X.
+#define CORNER_LOGO_X 8
+#define CORNER_LOGO_Y 40
 
 static void xfb_draw_corner_logo(u32 *fb_words, int fb_pitch_words) {
   static const yuv_t white = {235, 128, 128};
@@ -506,9 +505,9 @@ int main(int argc, char **argv) {
     }
 
     // Repaint each port at a fixed row (5 rows: header + 3 data + blank).
-    // Logo+title bitmaps occupy y=16..80 → port rendering starts at row 6
-    // (y=96, just below the logo's bottom edge with a clean gap).
-    int base_row = 6;
+    // Logo + title occupy y=40..~94 → port rendering starts a little below
+    // that with breathing room.
+    int base_row = 7;
     for (int i = 0; i < 4; i++) {
       pad_snap_t snap = {0};
       u32 raw_type = SI_GetType(i);
