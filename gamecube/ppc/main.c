@@ -17,14 +17,16 @@ typedef enum {
   STYLE_N64,
   STYLE_GCN,
   STYLE_MOUSE,
+  STYLE_KEYBOARD,
 } pad_style_t;
 
 static const char *format_style(pad_style_t s) {
   switch (s) {
-  case STYLE_N64:   return "N64    ";
-  case STYLE_GCN:   return "GCN    ";
-  case STYLE_MOUSE: return "Mouse  ";
-  default:          return "None   ";
+  case STYLE_N64:      return "N64     ";
+  case STYLE_GCN:      return "GCN     ";
+  case STYLE_MOUSE:    return "Mouse   ";
+  case STYLE_KEYBOARD: return "Keyboard";
+  default:             return "None    ";
   }
 }
 
@@ -191,9 +193,15 @@ int main(int argc, char **argv) {
     int base_row = 5;
     for (int i = 0; i < 4; i++) {
       pad_snap_t snap = {0};
+      u32 raw_type = SI_GetType(i);
       if (n64[i].present) {
         snap_n64(&snap, &n64[i]);
-      } else if ((SI_GetType(i) & SI_TYPE_MASK) == SI_TYPE_GC) {
+      } else if ((raw_type & ~0x001F0000) == SI_GC_KEYBOARD) {
+        // GC ASCII keyboard — detection only; full key polling (cmd 0x54
+        // with 8-byte response carrying 3 simultaneous keycodes) is TODO,
+        // requires hardware to verify scancode→label mapping.
+        snap.style = STYLE_KEYBOARD;
+      } else if ((raw_type & SI_TYPE_MASK) == SI_TYPE_GC) {
         snap_gc(&snap, i, keysHeld[i]);
       }
       // STYLE_NONE leaves all zeros, including style="None"
