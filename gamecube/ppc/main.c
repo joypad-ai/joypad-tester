@@ -424,10 +424,14 @@ int main(int argc, char **argv) {
       }
       ss_x += ss_dx * 3;
       ss_y += ss_dy * 2;
-      const int max_x = FB_W - LOGO_W - 24;   // leave overscan margin
-      const int max_y = FB_H - LOGO_H - 24;
-      const int min_x = 24;
-      const int min_y = 24;
+      // Bounce against the actual framebuffer edges. Whatever the TV
+      // overscan eats happens at the same outer ring regardless, so
+      // letting the sprite touch x=0 / x=FB_W-LOGO_W maximizes visible
+      // travel on CRTs with conservative overscan.
+      const int max_x = FB_W - LOGO_W;
+      const int max_y = FB_H - LOGO_H;
+      const int min_x = 0;
+      const int min_y = 0;
       if (ss_x <= min_x) { ss_x = min_x; ss_dx = -ss_dx; ss_color = (ss_color + 1) % CYCLE_LEN; }
       if (ss_x >= max_x) { ss_x = max_x; ss_dx = -ss_dx; ss_color = (ss_color + 1) % CYCLE_LEN; }
       if (ss_y <= min_y) { ss_y = min_y; ss_dy = -ss_dy; ss_color = (ss_color + 1) % CYCLE_LEN; }
