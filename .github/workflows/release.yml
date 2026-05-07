@@ -12,6 +12,9 @@ on:
 permissions:
   contents: write   # needed to create the release
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
 jobs:
   parse:
     name: Parse tag
