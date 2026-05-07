@@ -324,32 +324,51 @@ int main(int argc, char **argv) {
         diff_msec(last_activity, gettime()) >= IDLE_THRESHOLD_MS;
 
     if (idle) {
-      // === Screensaver: clear everything once on entry, then bounce a
-      // color-cycling "Joypad" tag around the screen, erasing the prior
-      // glyph location each frame so nothing stays lit on a CRT.
+      // === Screensaver: clear once on entry, then bounce a color-cycling
+      // ASCII rendition of the joypad logo (logo_solid.svg in branding/)
+      // around the screen, erasing the prior frame each step.
+      static const char *logo[] = {
+          "   _________   ",
+          "  /  +   o o\\  ",
+          " (  +++ ^_^   )",
+          "  \\  +   o o /  ",
+          "   '---------'  ",
+      };
+      const int LOGO_W = 15;
+      const int LOGO_H = 5;
+      const char *blank_row = "                ";  // LOGO_W + 1 spaces
+
       if (!screensaver_on) {
         printf("\x1b[2J");
         screensaver_on = true;
         ss_prev_x = -1;
       }
       ss_frame++;
-      // Move every other frame so the logo doesn't blur across the screen.
-      if (ss_frame & 1) {
+      // Move every 4th frame for a slower glide. Two LongWait(2) per loop
+      // iteration ≈ 33ms/frame, so this updates ~7-8 times per second.
+      if ((ss_frame & 3) == 0) {
         if (ss_prev_x >= 0) {
-          SetPosition(ss_prev_x, ss_prev_y);
-          printf("      ");
+          for (int row = 0; row < LOGO_H; row++) {
+            SetPosition(ss_prev_x, ss_prev_y + row);
+            printf("%s", blank_row);
+          }
         }
         ss_x += ss_dx;
         ss_y += ss_dy;
-        const int max_x = 60;  // rough console width minus tag
-        const int max_y = 28;
+        // Bounds for 480p NTSC console: ~77 chars wide × ~28 tall.
+        // Logo's left edge can travel up to (width - LOGO_W) so its right
+        // edge reaches the screen's right side.
+        const int max_x = 77 - LOGO_W;
+        const int max_y = 23;
         if (ss_x <= 0)     { ss_x = 0;     ss_dx = -ss_dx; ss_color = (ss_color % 7) + 1; }
         if (ss_x >= max_x) { ss_x = max_x; ss_dx = -ss_dx; ss_color = (ss_color % 7) + 1; }
         if (ss_y <= 1)     { ss_y = 1;     ss_dy = -ss_dy; ss_color = (ss_color % 7) + 1; }
         if (ss_y >= max_y) { ss_y = max_y; ss_dy = -ss_dy; ss_color = (ss_color % 7) + 1; }
-        SetPosition(ss_x, ss_y);
         SetFgColor(ss_color, 2);
-        printf("Joypad");
+        for (int row = 0; row < LOGO_H; row++) {
+          SetPosition(ss_x, ss_y + row);
+          printf("%s", logo[row]);
+        }
         fflush(stdout);
         ss_prev_x = ss_x;
         ss_prev_y = ss_y;
