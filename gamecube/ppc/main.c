@@ -30,6 +30,75 @@ static const char *format_style(pad_style_t s) {
   }
 }
 
+// GameCube ASCII keyboard scancode → label. Mapping comes from the joypad-os
+// firmware (src/lib/joybus-pio/include/gamecube_definitions.h), originally
+// reverse-engineered from PSO's keymap.
+static const char *gc_key_label(u8 sc) {
+  if (sc == 0) return "-";
+  if (sc >= 0x10 && sc <= 0x29) {
+    static const char letters[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    static char buf[2];
+    buf[0] = letters[sc - 0x10];
+    buf[1] = 0;
+    return buf;
+  }
+  if (sc >= 0x2a && sc <= 0x33) {
+    static const char digits[] = "1234567890";
+    static char buf[2];
+    buf[0] = digits[sc - 0x2a];
+    buf[1] = 0;
+    return buf;
+  }
+  if (sc >= 0x40 && sc <= 0x4b) {
+    static char fbuf[4];
+    int n = sc - 0x40 + 1;
+    fbuf[0] = 'F';
+    if (n < 10) { fbuf[1] = '0' + n; fbuf[2] = 0; }
+    else { fbuf[1] = '1'; fbuf[2] = '0' + (n - 10); fbuf[3] = 0; }
+    return fbuf;
+  }
+  switch (sc) {
+  case 0x06: return "Home";
+  case 0x07: return "End";
+  case 0x08: return "PgUp";
+  case 0x09: return "PgDn";
+  case 0x0a: return "ScrLk";
+  case 0x34: return "-";
+  case 0x35: return "^";
+  case 0x36: return "Yen";
+  case 0x37: return "@";
+  case 0x38: return "[";
+  case 0x39: return ";";
+  case 0x3a: return ":";
+  case 0x3b: return "]";
+  case 0x3c: return ",";
+  case 0x3d: return ".";
+  case 0x3e: return "/";
+  case 0x3f: return "\\";
+  case 0x4c: return "Esc";
+  case 0x4d: return "Insert";
+  case 0x4e: return "Delete";
+  case 0x4f: return "`";
+  case 0x50: return "Backspace";
+  case 0x51: return "Tab";
+  case 0x53: return "CapsLock";
+  case 0x54: return "LShift";
+  case 0x55: return "RShift";
+  case 0x56: return "LCtrl";
+  case 0x57: return "LAlt";
+  case 0x58: return "LUnk1";
+  case 0x59: return "Space";
+  case 0x5a: return "RUnk1";
+  case 0x5b: return "RUnk2";
+  case 0x5c: return "Left";
+  case 0x5d: return "Down";
+  case 0x5e: return "Up";
+  case 0x5f: return "Right";
+  case 0x61: return "Enter";
+  default:   return "?";
+  }
+}
+
 typedef enum {
   PAK_NONE,
   PAK_UNKNOWN,
@@ -223,10 +292,12 @@ int main(int argc, char **argv) {
         printf("Style: %s Pak: None         Rumble: Unavailable\n",
                format_style(STYLE_KEYBOARD));
         SetFgColor(7, 2);
-        printf("Raw : %02x %02x %02x %02x %02x %02x %02x %02x\n",
-               r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7]);
-        printf("Keys: %02x %02x %02x   counter=%x  checksum=%02x\n",
-               r[4], r[5], r[6], r[0] & 0x0F, r[7]);
+        const char *k0 = gc_key_label(r[4]);
+        const char *k1 = gc_key_label(r[5]);
+        const char *k2 = gc_key_label(r[6]);
+        printf("Keys held: %-12s %-12s %-12s         \n", k0, k1, k2);
+        printf("Scancodes: %02x %02x %02x   counter=%x         \n",
+               r[4], r[5], r[6], r[0] & 0x0F);
         printf("                                                      \n\n");
         continue;
       } else if ((raw_type & SI_TYPE_MASK) == SI_TYPE_GC) {
