@@ -323,7 +323,6 @@ int main(int argc, char **argv) {
   int ss_dx = 1, ss_dy = 1;
   int ss_color = 2;
   int ss_prev_x = -1, ss_prev_y = -1;
-  int ss_frame = 0;
   u8 prev_kbd_keys[4][3] = {0};
 
   while (1) {
@@ -398,31 +397,26 @@ int main(int argc, char **argv) {
         ss_x = 80;  // pixel coords now
         ss_y = 80;
       }
-      ss_frame++;
-      if ((ss_frame & 3) == 0) {
-        // Erase prior bounding box.
-        if (ss_prev_x >= 0) {
-          xfb_clear_box(fb_words, FB_PITCH, ss_prev_x, ss_prev_y, LOGO_W, LOGO_H);
-        }
-        // Step + bounce. Move 4 px/update so the glide is visible without
-        // racing across the screen.
-        ss_x += ss_dx * 4;
-        ss_y += ss_dy * 2;
-        const int max_x = FB_W - LOGO_W - 24;   // leave overscan margin
-        const int max_y = FB_H - LOGO_H - 24;
-        const int min_x = 24;
-        const int min_y = 24;
-        if (ss_x <= min_x) { ss_x = min_x; ss_dx = -ss_dx; ss_color = (ss_color + 1) % CYCLE_LEN; }
-        if (ss_x >= max_x) { ss_x = max_x; ss_dx = -ss_dx; ss_color = (ss_color + 1) % CYCLE_LEN; }
-        if (ss_y <= min_y) { ss_y = min_y; ss_dy = -ss_dy; ss_color = (ss_color + 1) % CYCLE_LEN; }
-        if (ss_y >= max_y) { ss_y = max_y; ss_dy = -ss_dy; ss_color = (ss_color + 1) % CYCLE_LEN; }
-        // Pixel positions must be even (XFB packs 2 px/word).
-        int draw_x = ss_x & ~1;
-        xfb_draw_logo(fb_words, FB_PITCH, draw_x, ss_y, &cycle_yuv[ss_color]);
-        ss_prev_x = draw_x;
-        ss_prev_y = ss_y;
+      // Update every frame with small increments → smooth glide.
+      if (ss_prev_x >= 0) {
+        xfb_clear_box(fb_words, FB_PITCH, ss_prev_x, ss_prev_y, LOGO_W, LOGO_H);
       }
-      LongWait(2);
+      ss_x += ss_dx * 3;
+      ss_y += ss_dy * 2;
+      const int max_x = FB_W - LOGO_W - 24;   // leave overscan margin
+      const int max_y = FB_H - LOGO_H - 24;
+      const int min_x = 24;
+      const int min_y = 24;
+      if (ss_x <= min_x) { ss_x = min_x; ss_dx = -ss_dx; ss_color = (ss_color + 1) % CYCLE_LEN; }
+      if (ss_x >= max_x) { ss_x = max_x; ss_dx = -ss_dx; ss_color = (ss_color + 1) % CYCLE_LEN; }
+      if (ss_y <= min_y) { ss_y = min_y; ss_dy = -ss_dy; ss_color = (ss_color + 1) % CYCLE_LEN; }
+      if (ss_y >= max_y) { ss_y = max_y; ss_dy = -ss_dy; ss_color = (ss_color + 1) % CYCLE_LEN; }
+      // Pixel positions must be even (XFB packs 2 px/word).
+      int draw_x = ss_x & ~1;
+      xfb_draw_logo(fb_words, FB_PITCH, draw_x, ss_y, &cycle_yuv[ss_color]);
+      ss_prev_x = draw_x;
+      ss_prev_y = ss_y;
+      LongWait(1);  // ~60 fps for the screensaver
       continue;
     }
 

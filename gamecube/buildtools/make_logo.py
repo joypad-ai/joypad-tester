@@ -15,8 +15,8 @@ from pathlib import Path
 
 from PIL import Image
 
-LOGO_W = 128
-LOGO_H = 128
+LOGO_W = 160
+LOGO_H = 160
 
 HERE = Path(__file__).parent
 PROJECT = HERE.parent
