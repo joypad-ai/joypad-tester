@@ -9,18 +9,13 @@ A collection of homebrew controller test ROMs across game consoles. Each console
 | GameCube | working | [`gamecube/`](gamecube/) |
 | Game Boy Advance | working | [`gba/`](gba/) |
 
-## What it tests
-
-- All four/whatever ports simultaneously, no active-port toggling.
-- Per-port detected controller type.
-- Buttons, analog sticks, triggers, C-stick / C-buttons, D-pad — visualized live.
-- Native + cross-protocol controllers (e.g. N64 controllers via passive adapter on GameCube, where supported).
-- Accessory detection where applicable (Memory Pak / Rumble Pak / Transfer Pak on N64-protocol controllers).
-- Rumble actuation (controllers with built-in motors plus Rumble Pak via accessory protocol).
-
 ## Per-console
 
-See each console's `README.md` for build/flash instructions.
+Each console subdir has its own `README.md` with what its app tests,
+how to build/flash, and any embedding notes. See:
+
+- [`gamecube/README.md`](gamecube/README.md)
+- [`gba/README.md`](gba/README.md)
 
 ## Acknowledgements
 
