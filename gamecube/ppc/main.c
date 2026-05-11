@@ -5,6 +5,7 @@
 #include <ogc/lwp_watchdog.h>
 
 #include "../common/common_utils.h"
+#include "gba.h"
 #include "gen_logo.h"
 #include "n64.h"
 #include "ppc_utils.h"
@@ -264,6 +265,8 @@ typedef struct {
   bool a, b, x, y, l, r, z, start;
   bool d_up, d_down, d_left, d_right;
   bool c_up, c_down, c_left, c_right;
+  s8 gba_boot_err; // 0 = booted/N/A; >0 = idle/booting; <0 = error code
+  u8 gba_state;    // GBA_IDLE / GBA_BOOTED / GBA_FAILED
 } pad_snap_t;
 
 static const char *format_pak(pad_pak_t p) {
@@ -283,12 +286,33 @@ static const char *format_rumble(bool supported, bool active) {
   return active ? "Active" : "Idle";
 }
 
-static void snap_n64(pad_snap_t *out, int chan, const N64State *s) {
+// GBA REG_KEYINPUT layout (0 bit = pressed):
+//   keys[0] bits 0..7 = A, B, Select, Start, Right, Left, Up, Down
+//   keys[1] bits 0..1 = R, L
+// Pass NULL when channel is not a multibooted GBA.
+static void snap_n64(pad_snap_t *out, int chan, const N64State *s,
+                     const u8 gba_keys[2]) {
   switch (s->kind) {
   case N64_KIND_MOUSE: out->style = STYLE_MOUSE; break;
   case N64_KIND_MIC:   out->style = STYLE_MIC;   break;
   case N64_KIND_GBA:   out->style = STYLE_GBA;   break;
   default:             out->style = STYLE_N64;   break;
+  }
+  if (s->kind == N64_KIND_GBA && gba_keys) {
+    u8 lo = gba_keys[0], hi = gba_keys[1];
+    out->pak = PAK_NONE;
+    out->rumble_supported = false;
+    out->a       = !(lo & 0x01);
+    out->b       = !(lo & 0x02);
+    out->z       = !(lo & 0x04); // map Select → Z
+    out->start   = !(lo & 0x08);
+    out->d_right = !(lo & 0x10);
+    out->d_left  = !(lo & 0x20);
+    out->d_up    = !(lo & 0x40);
+    out->d_down  = !(lo & 0x80);
+    out->r       = !(hi & 0x01);
+    out->l       = !(hi & 0x02);
+    return;
   }
   switch (s->pak) {
   case N64_PAK_MEMORY:       out->pak = PAK_MEMORY;       break;
@@ -362,6 +386,16 @@ static void print_port(int p, const pad_snap_t *s) {
   if (s->pak == PAK_BIO_SENSOR) {
     printf("BPM: %03d %-9s\n", s->bio_bpm,
            s->bio_pulsing ? "(Pulsing)" : "(Resting)");
+  } else if (s->style == STYLE_GBA) {
+    const char *st = s->gba_state == 1 ? "Booted  "
+                   : s->gba_state == 2 ? "BootFail"
+                                       : "BootIdle";
+    u32 e[3]; u8 st3[3];
+    GBA_SnapEchoSamples(p, e, st3);
+    printf("Boot:%s err%+d e=%08x %08x %08x s=%02x \n",
+           st, s->gba_boot_err,
+           (unsigned)e[0], (unsigned)e[1], (unsigned)e[2],
+           (unsigned)st3[0]);
   } else {
     printf("Rumble: %-11s\n",
            format_rumble(s->rumble_supported, s->rumble_active));
@@ -405,6 +439,18 @@ int main(int argc, char **argv) {
   u16 keysHeldOld[4] = {0, 0, 0, 0};
 #endif
   N64State n64[SI_MAX_CHAN] = {0};
+  // GBA-via-link-cable multiboot state. When N64_Scan reports kind==GBA on
+  // a channel, fire ONE multiboot upload; the running payload then echoes
+  // REG_KEYINPUT, polled into gba_keys[chan][2]. Tri-state guards against
+  // re-trying on failure — boot blocks for several seconds, so retrying
+  // every frame would freeze the entire device while a misbehaving GBA is
+  // attached. State resets on disconnect so unplug+replug retries.
+  enum { GBA_IDLE = 0, GBA_BOOTED, GBA_FAILED, GBA_RETRY };
+  u8 gba_state[SI_MAX_CHAN] = {0};
+  s8 gba_err[SI_MAX_CHAN] = {0};
+  u64 gba_retry_at[SI_MAX_CHAN] = {0};
+  u8 gba_keys[SI_MAX_CHAN][2] = {{0}};
+  u16 gba_missing[SI_MAX_CHAN] = {0};
 
   // Idle screensaver state — bouncing "Joypad" tag protects CRTs from
   // burn-in. Activates after IDLE_THRESHOLD_MS of no controller activity;
@@ -423,6 +469,54 @@ int main(int argc, char **argv) {
     N64_Scan(n64);
     for (int i = 0; i < 4; i++) {
       keysHeld[i] = PAD_ButtonsHeld(i);
+    }
+
+    // GBA: auto-multiboot any channel reporting a GBA, then poll the
+    // running payload for REG_KEYINPUT each frame. Single-shot per
+    // detection — failures parked in GBA_FAILED so we don't keep
+    // re-attempting (the boot blocks for seconds).
+    for (int i = 0; i < SI_MAX_CHAN; i++) {
+      if (n64[i].present && n64[i].kind == N64_KIND_GBA) {
+        gba_missing[i] = 0;
+        // Cooldown elapsed → leave RETRY for IDLE to attempt again.
+        if (gba_state[i] == GBA_RETRY && gettime() >= gba_retry_at[i]) {
+          gba_state[i] = GBA_IDLE;
+        }
+        if (gba_state[i] == GBA_IDLE) {
+          int rc = GBA_BootEmbedded(i);
+          gba_err[i] = (s8)rc;
+          if (rc == 0) {
+            gba_state[i] = GBA_BOOTED;
+          } else if (rc == -2) {
+            // Ready timeout — GBA is detected but BIOS isn't yet in
+            // multiboot-waiting state (typical at cold boot, where the
+            // GBA is still doing its own boot animation). Back off and
+            // try again rather than parking permanently in FAILED.
+            gba_state[i] = GBA_RETRY;
+            gba_retry_at[i] = gettime() + millisecs_to_ticks(2000);
+          } else {
+            gba_state[i] = GBA_FAILED;
+          }
+        }
+        if (gba_state[i] == GBA_BOOTED) {
+          GBA_PollInput(i, gba_keys[i]);
+        }
+      } else if (gba_state[i] != GBA_IDLE || gba_keys[i][0] || gba_keys[i][1]) {
+        // Disconnect debounce: libogc's SI_GetType passes through
+        // transient values during cable removal — one of which masks to
+        // SI_GC_STEERING and would briefly relabel the port "Wheel".
+        // Hold state for ~1s before fully tearing down; if the GBA
+        // really is gone it'll still go to IDLE then.
+        if (++gba_missing[i] < 60) {
+          // still keep gba_lock alive for the display chain
+        } else {
+          gba_state[i] = GBA_IDLE;
+          gba_err[i] = 0;
+          gba_retry_at[i] = 0;
+          gba_keys[i][0] = gba_keys[i][1] = 0;
+          gba_missing[i] = 0;
+        }
+      }
     }
 
     // Rumble while A is held (matches libdragon's JoypadTest reference).
@@ -460,6 +554,12 @@ int main(int argc, char **argv) {
       if (n64[i].present && n64[i].buttons) active = true;
       if (n64[i].present &&
           (abs(n64[i].stick_x) > 30 || abs(n64[i].stick_y) > 30)) active = true;
+      // GBA REG_KEYINPUT: 0 bit = pressed, default 0x03FF (nothing held).
+      // Treat 0x0000 as "pre-init / no data" (also inactive).
+      if (gba_state[i] == GBA_BOOTED) {
+        u16 keys = (u16)gba_keys[i][0] | ((u16)(gba_keys[i][1] & 0x03) << 8);
+        if (keys != 0x03FF && keys != 0x0000) active = true;
+      }
       if (kbd_chan[i]) {
         u8 r[8] = {0};
         GCKeyboard_Poll(i, r);
@@ -532,8 +632,21 @@ int main(int argc, char **argv) {
     for (int i = 0; i < 4; i++) {
       pad_snap_t snap = {0};
       u32 raw_type = SI_GetType(i);
-      if (n64[i].present) {
-        snap_n64(&snap, i, &n64[i]);
+      // If our state machine knows this channel hosts a GBA (idle/booted/
+      // retry/failed), force the GBA display path regardless of what
+      // libogc's SI_GetType currently reports — during/after multiboot
+      // the raw type can transiently mask to a steering wheel etc.
+      bool gba_lock = gba_state[i] != GBA_IDLE || n64[i].kind == N64_KIND_GBA;
+      if (n64[i].present || gba_lock) {
+        N64State s = n64[i];
+        if (gba_lock) {
+          s.present = true;
+          s.kind = N64_KIND_GBA;
+          s.pak = N64_PAK_NONE;
+        }
+        snap_n64(&snap, i, &s, gba_keys[i]);
+        snap.gba_boot_err = gba_err[i];
+        snap.gba_state = gba_state[i];
       } else if (kbd_chan[i]) {
         snap.style = STYLE_KEYBOARD;
         u8 r[8] = {0};

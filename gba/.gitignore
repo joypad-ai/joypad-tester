@@ -1,0 +1,12 @@
+# Build intermediates — but KEEP the committed payload artifacts
+# (build/joypad_payload.c, build/joypad_mb.gba) so consumers of this
+# repo as a submodule don't need devkitARM unless they're modifying the
+# payload source.
+build/*.o
+build/*.d
+build/*.elf
+build/*.map
+joypad.map
+
+.DS_Store
+.vscode

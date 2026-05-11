@@ -283,6 +283,14 @@ void N64_Scan(N64State *state) {
   for (s32 c = 0; c < SI_MAX_CHAN; c++) {
     n64_kind_t fresh = kind_for_type(SI_GetType(c));
     if (fresh != N64_KIND_NONE) chan_kind[c] = fresh;
+    // GBA detection is non-sticky: the multiboot path needs the cache to
+    // clear immediately on failure/disconnect so a re-attempt on the
+    // same port works without rebooting the host. (Controllers / mice
+    // need stickiness because libogc's SI_GetType bounces between cached
+    // type and NORESP; GBA doesn't have that problem.)
+    if (chan_kind[c] == N64_KIND_GBA && fresh != N64_KIND_GBA) {
+      chan_kind[c] = N64_KIND_NONE;
+    }
     n64_kind_t kind = chan_kind[c];
 
     if (kind == N64_KIND_NONE) {
