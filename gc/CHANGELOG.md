@@ -1,5 +1,31 @@
 # Joypad Tester — GameCube — Changelog
 
+## v0.2.0 — 2026-05-11
+
+First release under the new short-codename convention. The subdir is
+now `gc/` (was `gamecube/`) and the release tag is `gc-v0.2.0` (was
+`gamecube-v0.1.0`). The historical `gamecube-v0.1.0` tag/release stays
+intact as a frozen snapshot of the old layout — future releases all
+use the `gc-` prefix.
+
+### Fixed
+
+- GBA disconnect no longer ghost-detects as a regular GameCube
+  controller. libogc's `SI_GetType` walks through transient values
+  during cable removal that mask to `SI_TYPE_GC` (with or without
+  `SI_GC_STANDARD` set); the bare type-match fallback was latching
+  those as "GCN". Added a `gc_chan[]` sticky cache parallel to
+  `kbd_chan` / `wheel_chan`, gated on `SI_GC_STANDARD` + no
+  `NO_RESPONSE`, so transient reads can't flip the port label.
+
+### Changed
+
+- Subdir rename `gamecube/` -> `gc/` to match the short-codename
+  convention used by `gba/`, `pce/`, and future consoles. Tag prefix
+  shifts from `gamecube-v*` to `gc-v*`. `TARGET_CONSOLE=gamecube|wii`
+  inside the libogc build is unchanged (that's the libogc internal
+  platform name, not our subdir codename).
+
 ## v0.1.0 — 2026-05-07
 
 Initial release.
