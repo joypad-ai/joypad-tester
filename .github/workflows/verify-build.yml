@@ -24,6 +24,13 @@ jobs:
               gamecube/joypad-tester-gamecube.dol
               gamecube/joypad-tester-wii.dol
               gamecube/opening.bnr
+          - console: gba
+            image: devkitpro/devkitarm:latest
+            artifacts: |
+              gba/build/joypad/joypad_mb.gba
+              gba/build/joypad/joypad_payload.c
+              gba/build/tester/tester_mb.gba
+              gba/build/tester/tester_payload.c
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -37,9 +44,11 @@ jobs:
           python-version: '3.12'
 
       - name: Install Pillow (for banner generation)
+        if: matrix.console == 'gamecube'
         run: pip install --quiet Pillow
 
       - name: Generate banner
+        if: matrix.console == 'gamecube'
         working-directory: ${{ matrix.console }}
         run: python3 buildtools/make_banner.py opening.bnr
 
@@ -67,6 +76,16 @@ jobs:
             -u "$(id -u):$(id -g)" \
             ${{ matrix.image }} \
             bash -c "TARGET_CONSOLE=wii make"
+
+      - name: Build (GBA — both variants)
+        if: matrix.console == 'gba'
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}":/workspace \
+            -w /workspace/gba \
+            -u "$(id -u):$(id -g)" \
+            ${{ matrix.image }} \
+            make
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4

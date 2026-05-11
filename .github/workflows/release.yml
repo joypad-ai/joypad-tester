@@ -61,14 +61,17 @@ jobs:
           fi
 
       - name: Set up Python
+        if: needs.parse.outputs.console == 'gamecube'
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
 
       - name: Install Pillow
+        if: needs.parse.outputs.console == 'gamecube'
         run: pip install --quiet Pillow
 
       - name: Generate banner
+        if: needs.parse.outputs.console == 'gamecube'
         working-directory: ${{ needs.parse.outputs.console }}
         run: python3 buildtools/make_banner.py opening.bnr
 
@@ -87,14 +90,35 @@ jobs:
             ghcr.io/extremscorner/libogc2:latest \
             bash -c "apt-get install -y -qq --no-install-recommends -t bookworm-backports xorriso 2>/dev/null; TARGET_CONSOLE=gamecube make && TARGET_CONSOLE=wii make"
 
-      - name: Stage release artifacts
+      - name: Build (GBA — both variants)
+        if: needs.parse.outputs.console == 'gba'
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}":/workspace \
+            -w /workspace/gba \
+            -u "$(id -u):$(id -g)" \
+            devkitpro/devkitarm:latest \
+            make
+
+      - name: Stage release artifacts (GameCube)
+        if: needs.parse.outputs.console == 'gamecube'
         working-directory: ${{ needs.parse.outputs.console }}
         run: |
           mkdir -p _release
-          # Copy whatever .dol files the build produced + the banner.
           for f in *.dol opening.bnr; do
             [ -f "$f" ] && cp "$f" _release/
           done
+          ls -la _release/
+
+      - name: Stage release artifacts (GBA)
+        if: needs.parse.outputs.console == 'gba'
+        working-directory: gba
+        run: |
+          mkdir -p _release
+          cp build/joypad/joypad_mb.gba       _release/
+          cp build/joypad/joypad_payload.c    _release/
+          cp build/tester/tester_mb.gba       _release/
+          cp build/tester/tester_payload.c    _release/
           ls -la _release/
 
       - name: Extract changelog section for this version
