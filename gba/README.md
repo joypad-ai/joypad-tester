@@ -1,126 +1,165 @@
-# joypad-tester / gba
+# Joypad Tester — Game Boy Advance
 
-GBA multiboot payloads that ship inside [joypad-tester](..). Two ROMs
-build from this one source tree:
+Game Boy Advance build of the [Joypad Tester](../README.md). Two
+multiboot ROMs built from one source tree: one ships as the GBA-as-
+controller payload that joypad-os multiboots over the GameCube link
+cable, the other is a standalone tester ROM you can multiboot from this
+repo's GameCube/Wii host or run from a flash cart.
 
-- **`joypad_mb.gba`** — Doridian-style joybus controller + animated
-  cartoon eyes overlay. Consumed by
-  [joypad-os](https://github.com/joypad-ai/joypad-os) via submodule for
-  its GBA-as-controller mode.
-- **`tester_mb.gba`** — Doridian-style joybus controller + an on-GBA
-  console showing live button state, with an idle screensaver that
-  bounces the joypad logo (color-cycling on each wall hit) à la the
-  GameCube tester. Embedded into joypad-tester's GameCube/Wii host so
-  testers see visual feedback on the GBA, and runnable standalone from
-  a flash cart as a pure button-tester ROM.
+## What it tests
 
-The `build/` tree ships pre-built artifacts so consumers using this
-folder as a submodule (e.g. joypad-os) don't need devkitARM unless
-they're modifying the source:
+Each variant boots the same Doridian-style joybus controller loop and
+reports button state back to the host the moment a button changes. The
+two variants differ in what they render on the GBA screen:
 
 ```
-build/joypad/joypad_mb.gba       # eyes ROM (raw multiboot binary)
-build/joypad/joypad_payload.c    #          (C array for embedding)
-build/tester/tester_mb.gba       # tester ROM (raw multiboot binary)
-build/tester/tester_payload.c    #            (C array for embedding)
+joypad_mb.gba   eyes overlay (cartoon eyes + emotion state machine)
+tester_mb.gba   on-GBA text console + idle screensaver
 ```
 
-Each `*_payload.c` exports the same symbol names:
+| Variant      | On-GBA display                                                                                   | Intended host                 |
+|--------------|--------------------------------------------------------------------------------------------------|-------------------------------|
+| `joypad_mb`  | Mode-4 framebuffer + cylinder-eye renderer + emotion state machine (port of joypad-os's `eyes_anim`) | [joypad-os](https://github.com/joypad-ai/joypad-os) (RP2040) |
+| `tester_mb`  | 30×20 text console (live button state, 2-column layout) + idle screensaver (Mode-4 page-flipped) | This repo's GameCube/Wii host |
+
+Fields the GBA doesn't have (analog sticks, triggers, C-stick, rumble)
+don't exist on the wire — only the 10 face/dpad/shoulder/start/select
+buttons are reported. The 2-byte joybus payload carries them.
+
+## Joybus protocol
+
+The handshake + main loop is taken verbatim from
+[Doridian/Joybus-PIO](https://github.com/Doridian/Joybus-PIO)'s GBA
+side — `0x30303030` exchange, status-bit polls, SVC `0x26` BIOS reset
+on `JOYCNT.RST`. Modifying it breaks the cable's level-shifter MCU, so
+both variants share the same loop and only swap the on-screen renderer
+behind it.
+
+Hot-swap and host-reboot re-multiboot rely on noticing a host `cmd 0xFF`
+within a frame: `REG_JOYCNT.RST` is polled inside the VBlank busy-wait
+so any reset triggers `SystemCall(0x26)` within microseconds.
+
+## Eyes variant (`joypad_mb.gba`)
+
+Renders a pair of cartoon eyes (Mode-4 8bpp paletted framebuffer) whose
+gaze follows the dpad like a self-centering analog stick. An emotion
+state machine cycles `ACTIVE → wander → sleep` with per-emotion FG /
+pupil palette swaps. Designed to ship inside joypad-os as the GBA-as-
+controller "personality" layer — the buttons remain the product, the
+overlay just confirms the link is alive.
+
+## Tester variant (`tester_mb.gba`)
+
+A 30-column × 20-row text console:
+
+```
+Joypad Tester — GBA
+GC Link: connected
+
+Buttons:
+  A:0          Start:0
+  B:0          Select:0
+  L:0          Up:0
+  R:0          Down:0
+                Left:0
+                Right:0
+
+Raw: 0000
+```
+
+Live indicators flip 0/1 as buttons change; `Raw: XXXX` is the hex
+joybus payload. After 30 seconds of no input, a Mode-4 page-flipped
+screensaver kicks in: the 64×54 joypad logo bounces off the screen
+edges, color-cycling through red / green / yellow / blue / magenta /
+cyan / white on every wall hit — same image, palette, and speed as the
+GameCube tester's idle screensaver, so testers see the same animation
+on both screens.
+
+If the host drops the joybus link, the variant falls back to standalone
+mode and the console keeps reporting button state directly from
+`REG_KEYINPUT` — useful as a pure flash-cart button tester.
+
+## Build
+
+With devkitPro / devkitARM installed:
+
+```
+make            # → build/joypad/joypad_mb.gba + build/tester/tester_mb.gba
+make joypad     # → build/joypad/joypad_mb.gba  only
+make tester     # → build/tester/tester_mb.gba  only
+make clean      # nuke build/
+```
+
+Without devkitPro, use the Docker image:
+
+```
+docker run --rm -v "$PWD":/workspace -w /workspace \
+  devkitpro/devkitarm:latest make
+```
+
+CI builds both variants on every push to `main` (see
+[`.github/workflows/verify-build.yml`](../.github/workflows/verify-build.yml)).
+
+The `build/` tree is committed so consumers using this folder as a
+submodule (e.g. joypad-os) don't need devkitARM unless they're
+modifying the source — rebuild and commit `build/<variant>/<variant>_mb.gba`
++ `build/<variant>/<variant>_payload.c` whenever you change source.
+
+## Loading on hardware
+
+Two paths, depending on which variant and host:
+
+**Multiboot over GameCube link cable** — both variants. Build this
+repo's GameCube/Wii host (see [`../gamecube/`](../gamecube/)), connect a
+GBA Link Cable from GameCube SI port 2 to the GBA, leave the GBA on the
+"Press Start" screen with no cartridge, and start the host. The host
+uploads `tester_mb.gba` via Kawasedo handshake + stream cipher and the
+GBA boots into the tester variant. For the eyes variant, the host
+uploader lives in [joypad-os](https://github.com/joypad-ai/joypad-os)'s
+RP2040 firmware (`src/native/host/gc/gba_multiboot.c`).
+
+**Flash cart** — `tester_mb.gba` only. Drop `tester_mb.gba` onto an
+EZ-Flash / EverDrive / etc., boot it. Standalone fallback kicks in
+after the 3-second joybus handshake timeout and the variant runs as a
+pure on-GBA button tester.
+
+## Embedding
+
+Drop the appropriate `build/<variant>/<variant>_payload.c` into your
+host firmware's source list, then feed the symbols to your joybus
+multiboot uploader. Both variants export the same symbol names so the
+host's externs don't change when switching ROMs:
 
 ```c
 extern const uint8_t  joypad_payload[];
 extern const uint32_t joypad_payload_len;
 ```
 
-so a host can drop either file in and the embedding code doesn't have
-to change. Pick the variant that fits your product.
-
-## Lineage
-
-The joybus handshake + main loop in `source/main.c` and
-`source/main_tester.c` (the `0x30303030` exchange, status-bit polls,
-SVC `0x26` BIOS reset on `JOYCNT.RST`) is taken from **Doridian's
-[Joybus-PIO](https://github.com/Doridian/Joybus-PIO)** `gba/source/main.c`
-(2023). That sequence is load-bearing for the cable's level-shifter MCU;
-modifying it breaks the host's view of input. The eyes overlay and the
-tester console run on top of it.
-
-Chain of credit:
-
-- **[gbatek](https://problemkaputt.de/gbatek.htm)** (Martin Korth) —
-  authoritative GBA hardware reference (SIO / Joybus / BIOS reset
-  semantics)
-- **[libgbacom](https://github.com/Sage-of-Mirrors/libgbacom)**
-  (Sage-of-Mirrors, ported from VisualBoyAdvance) — original
-  reverse-engineering of the joyboot stream cipher
-- **[gc-gba-link-cable-demo](https://github.com/FIX94/gc-gba-link-cable-demo)**
-  (FIX94) — canonical GameCube-side reference for booting a GBA over the
-  link cable
-- **[Joybus-PIO](https://github.com/Doridian/Joybus-PIO)** (Doridian) —
-  RP2040-PIO implementation of the GameCube side, plus the GBA-side
-  controller payload these variants build on
-- **This subtree** — eyes overlay (port of joypad-os's `eyes_anim`),
-  Mode-4 page-flipped screensaver matching the joypad-tester GC
-  variant's logo + colour cycle, two-build Makefile, robust joybus
-  reset handling (polls `JOYCNT.RST` inside the VBlank busy-wait so
-  host cmd 0xFF triggers `SystemCall(0x26)` within microseconds)
-
-## Embedding
-
-Drop the appropriate `build/<variant>/<variant>_payload.c` into your
-host firmware's source list, then feed `joypad_payload[]` /
-`joypad_payload_len` to your joybus multiboot uploader. See
-[joypad-os](https://github.com/joypad-ai/joypad-os)'s
-`src/native/host/gc/gba_multiboot.c` or this repo's
-[`../gamecube/ppc/gba.c`](../gamecube/ppc/gba.c) for reference uploader
-implementations (Kawasedo handshake, stream cipher, polled WRITE/READ,
+See [`../gamecube/ppc/gba.c`](../gamecube/ppc/gba.c) or joypad-os's
+`src/native/host/gc/gba_multiboot.c` for a reference uploader
+implementation (Kawasedo handshake, stream cipher, polled WRITE/READ,
 unconditional handshake-complete write).
 
-## Building (only if you change source)
+## Releases
 
-Requires devkitPro / devkitARM:
+Tagged as `gba-v<semver>` from the repo root — see
+[`gba/CHANGELOG.md`](CHANGELOG.md) for per-version notes. The release
+workflow attaches `joypad_mb.gba`, `joypad_payload.c`, `tester_mb.gba`,
+and `tester_payload.c` to each GitHub Release automatically.
 
-```bash
-# macOS
-brew install --cask devkitpro-pacman
-sudo dkp-pacman -S gba-dev
+## Origin / credits
 
-# Linux
-# https://devkitpro.org/wiki/devkitPro_pacman
-
-export DEVKITPRO=/opt/devkitpro
-
-make            # build both variants
-make joypad     # build only the eyes ROM
-make tester     # build only the tester ROM
-make clean      # nuke build/
-```
-
-Outputs land in `build/joypad/` and `build/tester/`. Both `*_mb.gba`
-and `*_payload.c` are committed; rebuild and commit them whenever you
-change source.
-
-## Layout
-
-```
-.
-├── Makefile                       # two-variant build → build/<variant>/
-├── source/
-│   ├── main.c                     # eyes variant entry (joybus + eyes_anim)
-│   ├── main_tester.c              # tester variant entry (joybus + console
-│   │                              # + Mode-4 page-flipped screensaver)
-│   ├── display.c/.h               # Mode-4 framebuffer for the eyes variant
-│   ├── eyes_anim.c/.h             # cylinder-eye renderer + emotion state
-│   │                              # machine
-│   └── platform/
-│       └── platform.h             # stub for shared eyes_anim platform API
-├── tools/
-│   └── bin2c.py                   # binary .gba → C array converter
-└── build/                         # committed pre-built payload artifacts
-    ├── joypad/
-    │   ├── joypad_mb.gba
-    │   └── joypad_payload.c
-    └── tester/
-        ├── tester_mb.gba
-        └── tester_payload.c
-```
+Built on Doridian's [Joybus-PIO](https://github.com/Doridian/Joybus-PIO)
+GBA payload (MIT) — see [`LICENSE.md`](LICENSE.md). The joybus handshake
++ main loop (`0x30303030` exchange, status-bit polls, SVC `0x26` BIOS
+reset on `JOYCNT.RST`) is taken verbatim from Doridian's `gba/source/main.c`;
+the eyes overlay, tester console, Mode-4 page-flipped screensaver
+(matching the GameCube tester's logo + color cycle), two-build Makefile,
+and robust joybus reset handling (polling `JOYCNT.RST` inside the VBlank
+busy-wait) are added on top. Joyboot stream cipher reverse-engineered by
+Sage-of-Mirrors' [libgbacom](https://github.com/Sage-of-Mirrors/libgbacom)
+(ported from VisualBoyAdvance); canonical GameCube-side multiboot
+reference by FIX94's
+[gc-gba-link-cable-demo](https://github.com/FIX94/gc-gba-link-cable-demo);
+hardware semantics per [gbatek](https://problemkaputt.de/gbatek.htm)
+(Martin Korth). Eyes overlay is a port of joypad-os's `eyes_anim`.

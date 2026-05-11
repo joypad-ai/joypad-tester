@@ -4,10 +4,10 @@ A collection of homebrew controller test ROMs across game consoles. Each console
 
 ## Consoles
 
-| Console | Status | Path |
-|---|---|---|
-| GameCube | working | [`gamecube/`](gamecube/) |
-| Game Boy Advance | working | [`gba/`](gba/) |
+| Console | Status | Path | License |
+|---|---|---|---|
+| GameCube | working | [`gamecube/`](gamecube/) | [zlib](gamecube/LICENSE.md) |
+| Game Boy Advance | working | [`gba/`](gba/) | [MIT](gba/LICENSE.md) |
 
 ## Per-console
 
@@ -30,8 +30,6 @@ Originating copyrights are preserved in each console's source headers.
 
 ## License
 
-Top-level repo (CI, build infra, this README): [MIT](LICENSE.md). Each
-console subdir carries its own license file matching its upstream
-origin — `gamecube/` is zlib via corenting's GC-Controller-Test (see
-[`gamecube/LICENSE.md`](gamecube/LICENSE.md)); `gba/` is MIT via
-Doridian's Joybus-PIO (see [`gba/LICENSE.md`](gba/LICENSE.md)).
+Top-level repo scaffolding (CI, build infra, this README): [MIT](LICENSE.md).
+Each console subdir carries its own `LICENSE.md` matching its upstream
+origin — see the **License** column of the Consoles table above.

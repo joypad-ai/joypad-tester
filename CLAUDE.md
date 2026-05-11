@@ -57,6 +57,46 @@ subdirs" list.
 | `README.md`   | Audience-facing overview: what the app is, how to build, how to embed. |
 | `Makefile`    | Build entrypoint. Use a Docker-based toolchain if it eases CI. |
 
+### README structure (every console subdir)
+
+Each `<console>/README.md` follows the same top-to-bottom outline so
+they're navigable as a set. Sections marked *(optional)* are included
+only when the console has that surface; everything else is required.
+
+1. **Title** — `# Joypad Tester — <Console>`
+2. **Intro** — one paragraph: what this build does and a link back to
+   the top-level repo (`[Joypad Tester](../README.md)`).
+3. **`## What it tests`** — concrete ASCII example of the on-screen
+   output, then a table covering the per-port / per-variant matrix
+   (controller types, payload variants, etc.). Always state which
+   fields are unavailable on this platform so reading "zeros" isn't
+   ambiguous.
+4. **`## (feature deep-dives)`** — one `##` section per non-obvious
+   subsystem (accessory paks, alt protocols, BIOS quirks, idle modes,
+   etc.). Use as many as needed. Keep them concrete: protocol bytes,
+   timings, register addresses where relevant.
+5. **`## Build`** — preferred toolchain commands (devkitPro / devkitARM
+   / etc.) followed by the Docker fallback (`./build_docker.sh` or a
+   bare `docker run` line). End with a link to
+   `.github/workflows/verify-build.yml`.
+6. **`## Loading on hardware`** — how the artifact gets onto real
+   hardware: SD-card layout, multiboot upload, flash cart slot, etc.
+   Include the canonical loader (Swiss, joypad-os, etc.) where it
+   applies.
+7. **`## Embedding`** *(optional)* — only when the subdir produces a
+   payload another product consumes. State the symbol names and the
+   reference uploader file.
+8. **`## Releases`** — one paragraph: tag format (`<console>-v<semver>`),
+   link to `CHANGELOG.md`, list of artifacts the release workflow
+   attaches.
+9. **`## Origin / credits`** — upstream lineage (project + license +
+   link), what this subtree adds, and a link to `LICENSE.md`.
+
+`gamecube/README.md` is the canonical example. When adding a new
+console, copy its skeleton and fill each section in — don't reorder or
+rename headings, because the top-level README and CLAUDE.md both
+reference them.
+
 ### Build outputs
 
 Intermediates (`*.o`, `*.d`, `*.elf`, `*.map`) should be `.gitignore`d.
@@ -120,6 +160,22 @@ To cut, e.g., `gba-v0.2.0`:
 
 If `VERSION` doesn't match the tag, the release fails (intentional —
 forces the changelog and version-bump commits to land before the tag).
+
+## Top-level README
+
+The repo-root `README.md` stays a thin index — its only per-console
+state lives in two tables:
+
+- **Consoles** — `Console | Status | Path | License`. The License
+  column links to `<console>/LICENSE.md` so the bottom-of-page License
+  section never has to enumerate per-console licenses.
+- **Acknowledgements** — `Console | Origin / inspiration`. One row per
+  console summarising upstream lineage; deep credits live in each
+  console's `README.md` "Origin / credits" section.
+
+Adding a console = adding one row to each table. Never enumerate
+consoles inline in prose anywhere else in the top-level README — it
+breaks at N consoles.
 
 ## When extending or refactoring
 
