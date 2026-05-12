@@ -127,10 +127,13 @@ jobs:
         working-directory: gba
         run: |
           mkdir -p _release
-          cp build/joypad/joypad_mb.gba       _release/
-          cp build/joypad/joypad_payload.c    _release/
-          cp build/tester/tester_mb.gba       _release/
-          cp build/tester/tester_payload.c    _release/
+          # Only the playable .gba ROMs go in the public release.
+          # _payload.c (C-array form for compile-time embedding) lives in
+          # the committed gba/build/ tree; submodule consumers like
+          # joypad-os pull it from the working tree, not from a Release
+          # artifact, so attaching it to the Release would be noise.
+          cp build/joypad/joypad_mb.gba  _release/
+          cp build/tester/tester_mb.gba  _release/
           ls -la _release/
 
       - name: Stage release artifacts (PC Engine)
