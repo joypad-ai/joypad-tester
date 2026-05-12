@@ -382,20 +382,35 @@ static void print_port(int p, const pad_snap_t *s) {
   printf("Port %d ", p + 1);
   SetFgColor(3, 2);
   printf("Style: %s ", format_style(s->style));
-  printf("Pak: %s ", format_pak(s->pak));
+  // Pak is N64-controller-specific (Memory / Rumble / Transfer / Bio /
+  // Snap Station). Standard GCN controllers, WaveBirds, the keyboard,
+  // the wheel, and an attached GBA have no Pak slot, so the field
+  // only renders for N64-style entries.
+  if (s->style == STYLE_N64 || s->style == STYLE_MOUSE ||
+      s->style == STYLE_MIC) {
+    printf("Pak: %s ", format_pak(s->pak));
+  } else {
+    printf("                  ");
+  }
   if (s->pak == PAK_BIO_SENSOR) {
     printf("BPM: %03d %-9s\n", s->bio_bpm,
            s->bio_pulsing ? "(Pulsing)" : "(Resting)");
   } else if (s->style == STYLE_GBA) {
-    const char *st = s->gba_state == 1 ? "Booted  "
+    const char *st = s->gba_state == 1 ? "Booted"
                    : s->gba_state == 2 ? "BootFail"
                                        : "BootIdle";
-    u32 e[3]; u8 st3[3];
-    GBA_SnapEchoSamples(p, e, st3);
-    printf("Boot:%s err%+d e=%08x %08x %08x s=%02x \n",
-           st, s->gba_boot_err,
-           (unsigned)e[0], (unsigned)e[1], (unsigned)e[2],
-           (unsigned)st3[0]);
+    // Only surface the boot error when the boot actually failed -- on
+    // a successful boot or while still uploading, the err code is
+    // noise. The Kawasedo handshake-echo samples that used to follow
+    // (e=... e=... e=... s=...) were only useful for first-time
+    // bring-up debugging and clutter the end-user readout, so they're
+    // gone too.
+    if (s->gba_state == 2) {
+      printf("Boot: %-8s err%+d                      \n",
+             st, s->gba_boot_err);
+    } else {
+      printf("Boot: %-32s\n", st);
+    }
   } else {
     printf("Rumble: %-11s\n",
            format_rumble(s->rumble_supported, s->rumble_active));
@@ -692,8 +707,10 @@ int main(int argc, char **argv) {
         SetFgColor(2, 2);
         printf("Port %d ", i + 1);
         SetFgColor(3, 2);
-        printf("Style: %s Pak: None         Rumble: Unavailable\n",
-               format_style(STYLE_KEYBOARD));
+        // Keyboard has no Pak slot, no rumble, no analog axes -- drop
+        // the noise and just label the port. Trailing spaces overwrite
+        // any leftover text from a previous frame's mode.
+        printf("Style: %s%-46s\n", format_style(STYLE_KEYBOARD), "");
         SetFgColor(7, 2);
         const char *k0 = gc_key_label(r[4]);
         const char *k1 = gc_key_label(r[5]);

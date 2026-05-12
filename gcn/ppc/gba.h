@@ -15,16 +15,6 @@ bool GBA_Detect(int chan);
 // detection event.
 int GBA_BootEmbedded(int chan);
 
-// Diagnostic accessors — last value seen when waiting for the post-boot
-// game-code echo. Useful for distinguishing "BIOS rejected upload" (=
-// last encrypted word residue) from "payload running but unexpected
-// echo" (= 0x30303030 with byte-shift, or arbitrary garbage).
-u32 GBA_LastEcho(int chan);
-u8  GBA_LastEchoStat(int chan);
-// Capture of first 3 echo samples (post-multiboot reads), to spot
-// patterns. echoes[i] = value, stats[i] = JOYSTAT byte.
-void GBA_SnapEchoSamples(int chan, u32 echoes[3], u8 stats[3]);
-
 // After multiboot, read the GBA payload's input report.
 // Fills `out[2]` with [keys_lo, keys_hi]:
 //   out[0] bits 0..7 = A, B, Select, Start, Right, Left, Up, Down

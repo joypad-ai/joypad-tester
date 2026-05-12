@@ -42,21 +42,6 @@ static u8 cmd_buf[8] ATTRIBUTE_ALIGN(32);
 static u8 resp_buf[8] ATTRIBUTE_ALIGN(32);
 static volatile u32 xfer_done_mask;
 
-// Diagnostic: last echo value read while waiting for payload handshake.
-static u32 last_echo[4];
-static u8  last_echo_stat[4];
-static u32 sample_echo[4][3];
-static u8  sample_stat[4][3];
-
-u32 GBA_LastEcho(int chan) { return last_echo[chan & 3]; }
-u8  GBA_LastEchoStat(int chan) { return last_echo_stat[chan & 3]; }
-void GBA_SnapEchoSamples(int chan, u32 echoes[3], u8 stats[3]) {
-  for (int i = 0; i < 3; i++) {
-    echoes[i] = sample_echo[chan & 3][i];
-    stats[i]  = sample_stat[chan & 3][i];
-  }
-}
-
 static void si_cb(s32 chan, u32 err) {
   (void)err;
   xfer_done_mask |= (1u << chan);
@@ -252,24 +237,11 @@ int GBA_BootEmbedded(int chan) {
   // Wait for payload's game-code echo.
   u32 expected = (u32)rom[0xAC] | ((u32)rom[0xAD] << 8) |
                  ((u32)rom[0xAE] << 16) | ((u32)rom[0xAF] << 24);
-  last_echo[chan & 3] = 0;
-  last_echo_stat[chan & 3] = 0;
-  for (int s = 0; s < 3; s++) {
-    sample_echo[chan & 3][s] = 0;
-    sample_stat[chan & 3][s] = 0;
-  }
-  int sample_idx = 0;
   bool got_echo = false;
   for (int p = 0; p < GBA_ECHO_ATTEMPTS; p++) {
     if (jb_read4(chan, r5)) {
       u32 v = (u32)r5[0] | ((u32)r5[1] << 8) | ((u32)r5[2] << 16) |
               ((u32)r5[3] << 24);
-      if (sample_idx < 3) {
-        sample_echo[chan & 3][sample_idx] = v;
-        sample_stat[chan & 3][sample_idx] = r5[4];
-        sample_idx++;
-      }
-      if (v != 0) { last_echo[chan & 3] = v; last_echo_stat[chan & 3] = r5[4]; }
       if (v == expected) { got_echo = true; break; }
     }
     busy_ms(GBA_ECHO_INTERVAL_MS);

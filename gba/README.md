@@ -8,6 +8,10 @@ repo's GameCube/Wii host or run from a flash cart.
 
 ## What it tests
 
+<p align="center">
+  <img src="branding/screenshot.png" alt="GBA Joypad Tester tester-variant rendering: 'JOYPAD TESTER' header, 'GC Link: connected', 2-column live button list (A/B/Sel/Start/L on the left, Up/Down/Left/Right/R on the right), and a Raw hex of the joybus payload" width="480">
+</p>
+
 Each variant boots the same Doridian-style joybus controller loop and
 reports button state back to the host the moment a button changes. The
 two variants differ in what they render on the GBA screen:

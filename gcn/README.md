@@ -7,6 +7,10 @@ keyboard.
 
 ## What it tests
 
+<p align="center">
+  <img src="branding/screenshot.png" alt="GameCube Joypad Tester running in Dolphin showing GCN on Port 1, GBA-multiboot on Port 2, ASCII keyboard on Port 3, and N64 controller with Rumble Pak on Port 4" width="600">
+</p>
+
 All four SI ports rendered live, simultaneously, with no active-port toggle.
 Each port shows:
 
