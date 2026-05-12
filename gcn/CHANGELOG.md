@@ -13,12 +13,3 @@ First release.
   Sensor (with live BPM) / Snap Station.
 - GBA-over-Link-Cable multiboot upload + per-button passthrough.
 - Idle screensaver: bouncing logo bitmap, 7-color wall-bounce cycle.
-
-### Artifacts
-
-- `joypad_tester_v1.0.0_gamecube.dol` — Swiss / GC Loader / FlippyDrive
-- `joypad_tester_v1.0.0_wii.dol` — Wii Homebrew Channel
-- `opening.bnr` — Swiss boot banner
-
-Full feature breakdown + build / flashing instructions in
-[`gcn/README.md`](https://github.com/joypad-ai/joypad-tester/blob/main/gcn/README.md).

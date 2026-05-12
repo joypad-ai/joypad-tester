@@ -15,13 +15,3 @@ First release.
 - Joybus loop taken verbatim from Doridian's Joybus-PIO; reset-edge
   detection inside the VBlank busy-wait so host `cmd 0xFF` triggers
   a clean SVC `0x26` re-multiboot within microseconds.
-
-### Artifacts
-
-- `joypad_tester_v1.0.0.gba` — drop onto any GBA flash cart, or let
-  the joypad-tester GameCube host multiboot it over the Link Cable.
-
-Full feature breakdown (including the unreleased eyes-variant payload
-that ships only via the committed `build/` tree for joypad-os to
-consume) in
-[`gba/README.md`](https://github.com/joypad-ai/joypad-tester/blob/main/gba/README.md).

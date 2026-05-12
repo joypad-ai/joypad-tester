@@ -66,7 +66,7 @@ subdirs" list.
 | File          | Purpose                                                       |
 |---------------|---------------------------------------------------------------|
 | `VERSION`     | Bare semver string. Must match the release tag (see below).   |
-| `CHANGELOG.md`| Per-version release notes. One section per release, header `## v<semver> — <date>`, body = 1-paragraph summary + 3-6 Highlights bullets + an Artifacts list + a link to README for full detail. The matching section is extracted verbatim and used as the GitHub Release body. |
+| `CHANGELOG.md`| Per-version release notes — the canonical source of truth for what shipped. One section per release, header `## v<semver> — <date>`, body = 1-paragraph summary + a small Highlights list. The GitHub Release body is a one-line pointer to this file (GitHub's auto-rendered Assets list handles the file list, no need to repeat it in either the changelog or the release body). |
 | `LICENSE.md`  | Whatever the upstream code's licence is (zlib, MIT, …).        |
 | `README.md`   | Audience-facing overview: what the app is, how to build, how to embed. The long-form feature breakdown lives here, not in the changelog. |
 | `Makefile`    | Build entrypoint. Use a Docker-based toolchain if it eases CI. |
@@ -172,16 +172,15 @@ To cut, e.g., `gba-v1.1.0`:
 
 1. Bump `<console>/VERSION` to `1.1.0`.
 2. Prepend a section to `<console>/CHANGELOG.md`:
-   `## v1.1.0 — YYYY-MM-DD`, 1-paragraph summary, 3-6 Highlights
-   bullets, an Artifacts list, and a link to the per-console README
-   for the full feature breakdown. This section is what end-users
-   see as the GitHub Release body — keep it scannable. Long-form
-   feature detail belongs in README.md, not in the changelog.
+   `## v1.1.0 — YYYY-MM-DD`, 1-paragraph summary, a small Highlights
+   list. No Artifacts section -- GitHub's auto-rendered Assets list
+   on the release page already lists every attached file, and the
+   release body itself is just a link to this file.
 3. Commit + push to `main`.
 4. Tag `<console>-v1.1.0` and push the tag.
-5. CI parses the tag, verifies VERSION, builds, and publishes the
-   GitHub Release with artifacts + the matching CHANGELOG section
-   as the body.
+5. CI parses the tag, verifies VERSION, builds, attaches the
+   artifacts, and writes a one-line release body pointing at
+   `<console>/CHANGELOG.md`.
 
 If `VERSION` doesn't match the tag, the release fails (intentional —
 forces the changelog/version-bump commits to land before the tag).

@@ -154,24 +154,23 @@ jobs:
           cp build/joypad-tester.pce "_release/joypad_tester_v${VERSION}.pce"
           ls -la _release/
 
-      - name: Extract release body from CHANGELOG
+      - name: Build release body
         id: notes
         working-directory: ${{ needs.parse.outputs.console }}
         run: |
-          VERSION="${{ needs.parse.outputs.version }}"
-          if [ -f CHANGELOG.md ]; then
-            awk -v ver="v$VERSION" '
-              /^## / {
-                if (capture) exit
-                if (index($0, ver)) capture = 1
-                next
-              }
-              capture { print }
-            ' CHANGELOG.md > _notes.md
-          fi
-          if [ ! -s _notes.md ]; then
-            echo "Release ${{ needs.parse.outputs.title }}." > _notes.md
-          fi
+          # Keep the release page tight: the CHANGELOG file is the
+          # source of truth for the version-by-version highlights,
+          # and the Assets section below auto-lists every attached
+          # artifact. The body just points at the changelog.
+          CONSOLE="${{ needs.parse.outputs.console }}"
+          REPO="https://github.com/${{ github.repository }}"
+          # Skip the anchor -- GitHub munges header text (drops dots,
+          # collapses em-dashes) so #v1.0.0--2026-05-11 etc. doesn't
+          # match deterministically. Top of the changelog is the
+          # latest version anyway.
+          cat > _notes.md <<EOF
+          See [\`${CONSOLE}/CHANGELOG.md\`](${REPO}/blob/main/${CONSOLE}/CHANGELOG.md) for release details.
+          EOF
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
