@@ -1,44 +1,55 @@
 # Joypad Tester — GameCube — Changelog
 
-## v0.2.0 — 2026-05-11
-
-First release under the new short-3-letter-codename convention. The
-subdir is now `gcn/` (was `gamecube/`) and the release tag is
-`gcn-v0.2.0` (was `gamecube-v0.1.0`). The historical `gamecube-v0.1.0`
-tag/release stays intact as a frozen snapshot of the old layout;
-future releases all use the `gcn-` prefix. (A short-lived intermediate
-`gc/` subdir + `gc-v` prefix was never shipped to release — we settled
-on `gcn` minutes after introducing it to avoid the 2-letter codename
-colliding with unrelated `gc/` directories in sibling repos.)
-
-### Fixed
-
-- GBA disconnect no longer ghost-detects as a regular GameCube
-  controller. libogc's `SI_GetType` walks through transient values
-  during cable removal that mask to `SI_TYPE_GC` (with or without
-  `SI_GC_STANDARD` set); the bare type-match fallback was latching
-  those as "GCN". Added a `gc_chan[]` sticky cache parallel to
-  `kbd_chan` / `wheel_chan`, gated on `SI_GC_STANDARD` + no
-  `NO_RESPONSE`, so transient reads can't flip the port label.
-
-### Changed
-
-- Subdir rename `gamecube/` -> `gcn/` to match the short-3-letter-
-  codename convention used by `gba/`, `pce/`, and future consoles.
-  Tag prefix shifts from `gamecube-v*` to `gcn-v*`.
-  `TARGET_CONSOLE=gamecube|wii` inside the libogc build is unchanged
-  (that's the libogc internal platform name, not our subdir codename).
-
-## v0.1.0 — 2026-05-07
+## v1.0.0 — 2026-05-11
 
 Initial release.
 
-- Live multi-port display for all four SI ports simultaneously.
-- Native GameCube controller support: buttons, D-pad, analog stick + C-stick, analog triggers, rumble.
-- N64 controller support via passive adapter (libogc2 SI detection): A/B/Z/Start, D-pad, L/R, C-buttons, analog stick.
-- N64 accessory detection: Memory Pak, Rumble Pak, Transfer Pak, Bio Sensor, Snap Station — using libdragon's probe sequence.
-- Rumble actuation on hold-A: built-in motor for GCN, Rumble Pak via accessory write for N64.
+### What it does
+
+- Live multi-port display for all four SI ports simultaneously, no
+  active-port toggling.
+- Native GameCube controller support (wired + WaveBird): buttons,
+  D-pad, analog stick + C-stick, analog triggers, rumble.
+- N64 controller support via passive adapter (libogc2 SI detection):
+  buttons, D-pad, analog stick. Accessory paks detected and reported:
+  Memory Pak, Rumble Pak, Transfer Pak, Bio Sensor (with BPM
+  readout), Snap Station. Rumble actuation on hold-A for both GCN's
+  built-in motor and N64's Rumble Pak.
 - N64 mouse style detection.
-- GameCube ASCII keyboard support: detects `SI_GC_KEYBOARD`, polls with 3-byte cmd `0x54`, maps scancodes to key labels (A/B/C, F1-F12, modifiers, arrows, etc.) using the joypad-os reference table.
-- Boot banner (`opening.bnr`) for Swiss-GC display, generated from `branding/banner.png` at build time.
-- Per-console build via Docker (`./build_docker.sh gamecube|wii`) using `ghcr.io/extremscorner/libogc2`.
+- GameCube ASCII keyboard support: detects `SI_GC_KEYBOARD`, polls
+  with the 3-byte cmd `0x54`, maps scancodes to key labels using the
+  joypad-os reference table.
+- GBA detection and multiboot upload over the official GameCube GBA
+  Link Cable. After upload the GBA boots into the Joypad Tester GBA
+  tester ROM, so users see button state on both the GBA's own screen
+  and the GameCube's per-port readout.
+- Sticky-cache disconnect handling: `kbd_chan` / `wheel_chan` /
+  `gc_chan` ride out the SI transients libogc walks through during
+  a controller pull (especially the GBA), so the port label doesn't
+  flicker through Keyboard / Wheel / GCN ghosts before settling on
+  None.
+- Idle screensaver after 30s: bouncing joypad logo bitmap with a
+  7-color cycle (red / green / yellow / blue / magenta / cyan /
+  white) on each wall bounce. Any input wakes back to the live view.
+
+### Build
+
+- Per-target Docker build: `./build_docker.sh gamecube` produces
+  `joypad-tester-gamecube.dol`; `./build_docker.sh wii` produces
+  `joypad-tester-wii.dol`. Toolchain image:
+  `ghcr.io/extremscorner/libogc2:latest`.
+- `opening.bnr` generated from `branding/banner.png` via
+  `buildtools/make_banner.py`.
+- Screensaver logo header generated from `branding/logo.png` via
+  `buildtools/make_logo.py`.
+- GBA payload (the on-GBA tester ROM byte array) auto-synced from
+  `../gba/build/tester/tester_payload.c` to `ppc/gba_payload.c` by
+  `build_docker.sh` and the Makefile, with the symbol renamed
+  `joypad_payload` -> `gba_payload` so it doesn't collide with
+  anything else in this tree.
+
+### Release artifacts
+
+- `joypad_tester_v1.0.0_gamecube.dol` (drop onto a Swiss SD card)
+- `joypad_tester_v1.0.0_wii.dol` (Wii via the Homebrew Channel)
+- `opening.bnr` (Swiss boot banner)

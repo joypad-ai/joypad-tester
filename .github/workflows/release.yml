@@ -116,33 +116,42 @@ jobs:
         if: needs.parse.outputs.console == 'gcn'
         working-directory: ${{ needs.parse.outputs.console }}
         run: |
+          # Flash-cart-friendly artifact names:
+          # joypad_tester_v<ver>_<platform>.dol so a user dropping the
+          # download onto an SD card sees the project + version inline.
+          # opening.bnr keeps its canonical name (required by Swiss).
+          VERSION="${{ needs.parse.outputs.version }}"
           mkdir -p _release
-          for f in *.dol opening.bnr; do
-            [ -f "$f" ] && cp "$f" _release/
-          done
+          [ -f joypad-tester-gamecube.dol ] && cp joypad-tester-gamecube.dol "_release/joypad_tester_v${VERSION}_gamecube.dol"
+          [ -f joypad-tester-wii.dol ]      && cp joypad-tester-wii.dol      "_release/joypad_tester_v${VERSION}_wii.dol"
+          [ -f opening.bnr ] && cp opening.bnr _release/
           ls -la _release/
 
       - name: Stage release artifacts (GBA)
         if: needs.parse.outputs.console == 'gba'
         working-directory: gba
         run: |
-          mkdir -p _release
           # Public release ships only the user-facing tester ROM.
           # The eyes variant (joypad_mb.gba) is a firmware payload meant
           # to be multibooted by a separate host (joypad-os keeps its
           # own copy for that role), not run standalone -- end-users
           # downloading the release want a playable joypad tester. The
-          # eyes build still lives in gba/build/ for source-tree consumers
-          # but doesn't get a Release attachment.
-          cp build/tester/tester_mb.gba  _release/
+          # eyes build still lives in gba/build/ for source-tree
+          # consumers but doesn't get a Release attachment.
+          # Flash-cart-friendly name: joypad_tester_v<ver>.gba.
+          VERSION="${{ needs.parse.outputs.version }}"
+          mkdir -p _release
+          cp build/tester/tester_mb.gba "_release/joypad_tester_v${VERSION}.gba"
           ls -la _release/
 
       - name: Stage release artifacts (PC Engine)
         if: needs.parse.outputs.console == 'pce'
         working-directory: pce
         run: |
+          # Flash-cart-friendly name: joypad_tester_v<ver>.pce.
+          VERSION="${{ needs.parse.outputs.version }}"
           mkdir -p _release
-          cp build/joypad-tester.pce _release/
+          cp build/joypad-tester.pce "_release/joypad_tester_v${VERSION}.pce"
           ls -la _release/
 
       - name: Extract changelog section for this version

@@ -127,7 +127,8 @@ FlippyDrive, SD2SP2, etc.) with the `.dol` renamed to `default.dol`:
 ```
 SD root/
   Joypad Tester/
-    default.dol     # joypad-tester-gamecube.dol from this build
+    default.dol     # joypad_tester_v<ver>_gamecube.dol from the release
+                    # (or joypad-tester-gamecube.dol straight from a local build)
     opening.bnr
 ```
 
@@ -137,11 +138,12 @@ file browser; selecting the folder runs `default.dol`.
 ## Releases
 
 Tagged as `gcn-v<semver>` from the repo root — see
-[`gcn/CHANGELOG.md`](CHANGELOG.md) for per-version notes. (The
-historical `gamecube-v0.1.0` tag predates the rename to short 3-letter
-codenames; future releases use the `gcn-` prefix.) The release
-workflow attaches `joypad-tester-gamecube.dol`, `joypad-tester-wii.dol`,
-and `opening.bnr` to each GitHub Release automatically.
+[`gcn/CHANGELOG.md`](CHANGELOG.md) for per-version notes. The release
+workflow attaches `joypad_tester_v<semver>_gamecube.dol`,
+`joypad_tester_v<semver>_wii.dol`, and `opening.bnr` to each GitHub
+Release. (In-tree build outputs use the libogc-target names
+`joypad-tester-gamecube.dol` / `joypad-tester-wii.dol`; release staging
+renames them for flash-cart drop-in legibility.)
 
 ## Origin / credits
 

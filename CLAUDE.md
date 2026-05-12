@@ -141,13 +141,14 @@ means adding a matrix entry + the corresponding build step(s).
 
 ## CI: releases (`.github/workflows/release.yml`)
 
-Tag-driven. Tag format: `<console>-v<semver>` (e.g. `gcn-v0.2.0`,
-`gba-v0.2.3`, `pce-v0.1.0`). Pre-release suffixes allowed (`-alpha.1`,
-`-rc.2`, …). One historical `gamecube-v0.1.0` tag predates the rename
-to short codenames — it stays as a frozen release; future GameCube
-releases use `gcn-v*`. (An intermediate `gc-` prefix was never
-shipped; the v0.2.0 work landed as `gcn-v0.2.0` once we settled on
-3-letter codenames.)
+Tag-driven. Tag format: `<console>-v<semver>` (e.g. `gcn-v1.0.0`,
+`gba-v1.0.0`, `pce-v1.0.0`). Pre-release suffixes allowed (`-alpha.1`,
+`-rc.2`, …). All three consoles joint-released as v1.0.0 on
+2026-05-11 once the naming convention (short 3-letter codenames),
+artifact-naming pattern (`joypad_tester_v<ver>.<ext>`), and inter-
+console wiring (gcn embeds gba's tester ROM) settled. Pre-1.0
+internal iterations (gamecube-v0.1.0, gc-v0.2.0, individual v0.1.0
+cuts of the other consoles) were nuked before going public.
 
 The workflow:
 

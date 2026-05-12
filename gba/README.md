@@ -144,11 +144,12 @@ unconditional handshake-complete write).
 
 Tagged as `gba-v<semver>` from the repo root — see
 [`gba/CHANGELOG.md`](CHANGELOG.md) for per-version notes. The release
-workflow attaches only `tester_mb.gba` — the user-facing standalone
-button tester. The eyes variant (`joypad_mb.gba`) is a firmware payload
-meant to be multibooted by a host firmware (joypad-os keeps its own
-copy for that role); it builds and ships in `gba/build/joypad/` for
-source-tree inspection but doesn't get a Release attachment.
+workflow attaches `joypad_tester_v<semver>.gba` (the standalone button
+tester, renamed at staging time for flash-cart drop-in legibility).
+The eyes variant (`joypad_mb.gba`) is a firmware payload meant to be
+multibooted by a host firmware (joypad-os keeps its own copy for that
+role); it builds in `gba/build/joypad/` for source-tree inspection but
+doesn't get a Release attachment.
 
 ## Origin / credits
 
