@@ -11,7 +11,7 @@
   <strong>Open-Source Controller Test ROMs for Retro Game Consoles</strong>
 </p>
 <p align="center">
-  Drop a single .dol / .gba / .pce on a flash cart and inspect every<br>controller, accessory, and protocol quirk on the bus.
+  Drop a single ROM on a flash cart and inspect every controller,<br>accessory, and protocol quirk the console can speak to.
 </p>
 <p align="center">
   <a href="https://github.com/joypad-ai/joypad-tester/releases"><img src="https://img.shields.io/github/downloads/joypad-ai/joypad-tester/total?style=for-the-badge&label=Downloads" alt="Downloads" /></a>
