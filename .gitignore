@@ -3,3 +3,5 @@
 3do/.wine-home/
 nuon/.nuon-sdk/
 nuon/build/
+n64/build/
+n64/joypad-tester.z64
