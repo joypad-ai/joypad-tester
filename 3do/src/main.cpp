@@ -192,6 +192,7 @@ static device_t  g_pods[MAX_DEVICES + 1];   // indexed [1..N], slot 0 unused
 static int       g_pod_count = 0;
 static Item      g_msgPortItem = -1;
 static Item      g_brokerPortItem = -1;
+extern Item      g_configMsgItem; /* forward; real definition below */
 
 // Compact diagnostic counters -- rendered as a bottom status line so
 // we can see what the broker is actually delivering on real hardware
@@ -220,6 +221,37 @@ static char      g_kb_text[KB_TEXT_MAX + 1] = { 0 };
 static int       g_kb_textlen = 0;
 static uint32    g_kb_prev_matrix[8] = { 0 };
 static uint32    g_kb_blink_frame    = 0;
+
+/* Caps Lock toggle state (off / on). Mirrored to the physical LED on
+ * the 3DO keyboard via EB_IssuePodCmd. Same approach as OptiDoom: when
+ * the user presses Caps Lock we flip the local state and send a
+ * GENERIC_KEYBOARD_SetLEDs command to all 8 pod slots (non-keyboard
+ * pods reject it silently). */
+static bool      g_caps_lock         = false;
+
+static void
+kb_send_led_state (void)
+{
+  struct {
+    EventBrokerHeader hdr;
+    int32 pd_PodNumber;
+    int32 pd_WaitFlag;
+    int32 pd_DataByteCount;
+    uint8 pd_Data[4];
+  } cmd;
+  memset (&cmd, 0, sizeof cmd);
+  cmd.hdr.ebh_Flavor   = EB_IssuePodCmd;
+  cmd.pd_WaitFlag      = 0;
+  cmd.pd_DataByteCount = 3;
+  cmd.pd_Data[0]       = GENERIC_Keyboard;
+  cmd.pd_Data[1]       = GENERIC_KEYBOARD_SetLEDs;
+  cmd.pd_Data[2]       = g_caps_lock ? KEYBOARD_LED_CAPSLOCK : 0;
+  for (int pod = 1; pod <= 8; pod++)
+    {
+      cmd.pd_PodNumber = pod;
+      SendMsg (g_brokerPortItem, g_configMsgItem, &cmd, sizeof cmd);
+    }
+}
 
 // PS/2 Set 2 scancode -> ASCII (unshifted). 0 = ignore key (modifier,
 // function key, unmapped). 0x08 = backspace (special-case: pop last
@@ -263,7 +295,8 @@ kb_consume_press (uint8 scancode)
 // reply has been received, so reusing one item for both would stall
 // the DescribePods send while the broker still owns the configure
 // message.
-static Item      g_configMsgItem = -1;
+/* forward-declared above as extern so kb_send_led_state can use it */
+Item             g_configMsgItem = -1;
 static Item      g_queryMsgItem  = -1;
 static MsgPort  *g_msgPort       = NULL;
 
@@ -683,7 +716,18 @@ apply_event_record (EventBrokerHeader *hdr, bool *needs_repodding)
                       uint32 mask = down & (~down + 1);    /* lowest set bit */
                       uint32 tmp  = mask;
                       while (tmp >>= 1) bit++;
-                      kb_consume_press ((uint8)(w * 32 + bit));
+                      uint8 sc = (uint8)(w * 32 + bit);
+                      if (sc == 0x58)
+                        {
+                          /* Caps Lock press -- toggle the LED on the
+                           * physical keyboard. */
+                          g_caps_lock = !g_caps_lock;
+                          kb_send_led_state ();
+                        }
+                      else
+                        {
+                          kb_consume_press (sc);
+                        }
                       down ^= mask;
                     }
                   g_kb_prev_matrix[w] = cur;
