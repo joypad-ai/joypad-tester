@@ -43,6 +43,12 @@ jobs:
             image: ""
             artifacts: |
               3do/build/joypad-tester.iso
+          - console: dc
+            # KallistiOS + dc-chain built from source inside
+            # dc/buildtools/Dockerfile -- see the Build (Dreamcast) step.
+            image: ""
+            artifacts: |
+              dc/build/joypad-tester-dreamcast.cdi
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -133,6 +139,20 @@ jobs:
               make NAME=joypad-tester
               cp iso/joypad-tester.iso /work/build/joypad-tester.iso
             "
+
+      - name: Build (Dreamcast)
+        if: matrix.console == 'dc'
+        run: |
+          # KOS + dc-chain (sh4-elf gcc + arm-eabi gcc) get built from
+          # source inside the toolchain image -- ~10-15 min the first
+          # time, cached across CI runs via the docker layer cache.
+          docker build -t joypad-tester-kos:ci dc/buildtools/
+          docker run --rm \
+            -v "${{ github.workspace }}":/workspace \
+            -w /workspace/dc \
+            -u "$(id -u):$(id -g)" \
+            joypad-tester-kos:ci \
+            make
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4

@@ -59,6 +59,20 @@ Existing console subdirs at time of writing:
   vendored devkit helpers; `3do/LICENSE.md`. Toolchain is Linux-only
   x86 binaries running under `--platform=linux/amd64` in the build
   container, so Docker is mandatory for this subdir.
+- `dc/` — Sega Dreamcast test app (KallistiOS-based, builds selfboot
+  `.cdi`). Tests every maple-bus device class — controllers, mice,
+  keyboards, light guns — plus per-port expansion slot peripherals
+  (VMU, Purupuru, microphone). Hosts a built-in VMU icon editor mode
+  (v0.2+, ported from `RobertDaleSmith/vmu-icon-maker`). First subdir
+  to ship the **mode-switching scaffold** (Start+Down opens a modal
+  options menu; modes share input + per-port state; new modes are a
+  function-pointer struct in `dc/src/modes/`). Future testers can
+  adopt this scaffold to add extended capabilities beyond bare
+  controller readouts. Origin: MIT (original `dc/src/`) over
+  KallistiOS (BSD-style, statically linked); `dc/LICENSE.md`.
+  Toolchain (KOS + dc-chain sh4-elf gcc) is built from source inside
+  `dc/buildtools/Dockerfile` (~10-15 min first build, layer-cached
+  after).
 
 ## Console subdir conventions
 

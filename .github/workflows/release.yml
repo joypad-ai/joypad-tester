@@ -37,6 +37,7 @@ jobs:
             gba)      PRETTY="Game Boy Advance" ;;
             pce)      PRETTY="PC Engine" ;;
             3do)      PRETTY="3DO" ;;
+            dc)       PRETTY="Dreamcast" ;;
             *)        PRETTY="$CONSOLE" ;;
           esac
           echo "console=$CONSOLE" >> "$GITHUB_OUTPUT"
@@ -133,6 +134,17 @@ jobs:
               cp iso/joypad-tester.iso /work/build/joypad-tester.iso
             "
 
+      - name: Build (Dreamcast)
+        if: needs.parse.outputs.console == 'dc'
+        run: |
+          docker build -t joypad-tester-kos:release dc/buildtools/
+          docker run --rm \
+            -v "${{ github.workspace }}":/workspace \
+            -w /workspace/dc \
+            -u "$(id -u):$(id -g)" \
+            joypad-tester-kos:release \
+            make
+
       - name: Stage release artifacts (GameCube)
         if: needs.parse.outputs.console == 'gcn'
         working-directory: ${{ needs.parse.outputs.console }}
@@ -214,6 +226,17 @@ jobs:
           VERSION="${{ needs.parse.outputs.version }}"
           mkdir -p _release
           cp build/joypad-tester.iso "_release/joypad_tester_v${VERSION}_3do.iso"
+          ls -la _release/
+
+      - name: Stage release artifacts (Dreamcast)
+        if: needs.parse.outputs.console == 'dc'
+        working-directory: dc
+        run: |
+          # Single .cdi artifact; bootable on Flycast/Redream and on
+          # real DC hardware via GDEMU / MODE / CD-R.
+          VERSION="${{ needs.parse.outputs.version }}"
+          mkdir -p _release
+          cp build/joypad-tester-dreamcast.cdi "_release/joypad_tester_v${VERSION}_dc.cdi"
           ls -la _release/
 
       - name: Build release body

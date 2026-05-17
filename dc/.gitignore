@@ -1,0 +1,12 @@
+build/
+_release/
+*.o
+*.d
+*.elf
+*.bin
+*.map
+*.iso
+*.cdi
+romdisk.img
+romdisk_boot.img
+.DS_Store
