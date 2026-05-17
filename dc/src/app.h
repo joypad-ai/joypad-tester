@@ -24,6 +24,7 @@
 typedef enum {
     JT_MODE_TESTER = 0,
     JT_MODE_VMU_EDITOR,
+    JT_MODE_BROWSER,
     JT_MODE_ABOUT,
     JT_MODE_COUNT
 } jt_mode_id_t;

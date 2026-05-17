@@ -30,6 +30,7 @@
 #include "ui/options_menu.h"
 #include "modes/tester.h"
 #include "modes/vmu_editor.h"
+#include "modes/browser.h"
 #include "modes/about.h"
 
 KOS_INIT_FLAGS(INIT_DEFAULT | INIT_MALLOCSTATS);
@@ -42,6 +43,7 @@ static jt_mode_id_t pending_mode = JT_MODE_TESTER;
 static const jt_mode_t * const mode_table[JT_MODE_COUNT] = {
     [JT_MODE_TESTER]     = &jt_mode_tester,
     [JT_MODE_VMU_EDITOR] = &jt_mode_vmu_editor,
+    [JT_MODE_BROWSER]    = &jt_mode_browser,
     [JT_MODE_ABOUT]      = &jt_mode_about,
 };
 

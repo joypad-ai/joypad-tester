@@ -32,7 +32,7 @@ A collection of homebrew controller test ROMs across game consoles. Each console
 | Game Boy Advance | working | [`gba/`](gba/) | [MIT](gba/LICENSE.md) |
 | PC Engine | working | [`pce/`](pce/) | [MIT](pce/LICENSE.md) |
 | 3DO | working | [`3do/`](3do/) | [MIT](3do/LICENSE.md) |
-| Dreamcast | scaffolded | [`dc/`](dc/) | [MIT](dc/LICENSE.md) |
+| Dreamcast | working | [`dc/`](dc/) | [MIT](dc/LICENSE.md) |
 
 Subdirs use short 3-letter codenames (`gcn`, `gba`, `pce`, `dc`, future
 `n64`/`snes`/…) matching homebrew-community conventions. Release tags

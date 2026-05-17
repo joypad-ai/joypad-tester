@@ -25,8 +25,13 @@ SOURCES := \
     $(SRCDIR)/ports/ports.c \
     $(SRCDIR)/ui/bfont_util.c \
     $(SRCDIR)/ui/options_menu.c \
+    $(SRCDIR)/vms/vms.c \
+    $(SRCDIR)/vms/apply.c \
+    $(SRCDIR)/library/library.c \
+    $(SRCDIR)/canvas/canvas.c \
     $(SRCDIR)/modes/tester.c \
     $(SRCDIR)/modes/vmu_editor.c \
+    $(SRCDIR)/modes/browser.c \
     $(SRCDIR)/modes/about.c
 
 OBJECTS := $(patsubst $(SRCDIR)/%.c,$(BUILDDIR)/%.o,$(SOURCES))

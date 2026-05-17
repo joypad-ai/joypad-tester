@@ -83,8 +83,16 @@ static void poll_kbd(jt_port_state_t *port, maple_device_t *dev)
 {
     kbd_state_t *st = (kbd_state_t *)maple_dev_status(dev);
     if (!st) return;
-    memcpy(port->kbd.scancodes, st->matrix, sizeof(port->kbd.scancodes));
-    port->kbd.modifiers = st->shift_keys;
+    /* Modern API: cond.keys[] is the actual list of currently-pressed
+     * scancodes from the keyboard's wire protocol (max 6 simultaneous),
+     * and last_modifiers.raw replaces the deprecated shift_keys field.
+     * Old API was matrix[] indexed by scancode -- different semantics. */
+    for (size_t i = 0; i < sizeof(port->kbd.scancodes); i++) {
+        port->kbd.scancodes[i] = (i < KBD_MAX_PRESSED_KEYS)
+                                   ? (uint8_t)st->cond.keys[i]
+                                   : 0;
+    }
+    port->kbd.modifiers = st->last_modifiers.raw;
 }
 
 void jt_ports_poll(void)

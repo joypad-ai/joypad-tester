@@ -1,5 +1,50 @@
 # Joypad Tester — Dreamcast — Changelog
 
+## v0.2.0 — 2026-05-17
+
+VMU Icon Editor mode is live. Full draw/extract/apply loop wired
+end-to-end against real VMU hardware via KallistiOS vmufs.
+
+### Highlights
+
+- **Editor mode** — 32×32 color (16-palette ARGB1555) + 32×32 mono
+  canvases, drawable with the unified cursor (pad analog OR DC
+  mouse). Tools: paint / erase / fill / pick. 32-deep snapshot
+  undo. D-pad cycles current color; L/R triggers swap color/mono
+  layer; Y cycles tool. 10x zoom (320×320 px) for the canvas.
+- **Save browser mode** — enumerates every save on every detected
+  VMU, decodes a thumbnail per save by extracting frame 0 of its
+  embedded icon (works for both ICONDATA_VMS and standard
+  game-save icons). A loads the icon into the editor; Y applies
+  it directly to the source VMU; X refreshes the list. Read-only
+  on game saves.
+- **Apply path** — Start in the editor opens a target picker
+  listing every detected VMU; A writes `ICONDATA_VMS` via
+  `vmufs_write`. Backup-on-replace is on by default: an existing
+  `ICONDATA_VMS` is stashed into that VMU's library save before
+  the new one overwrites.
+- **Library save format** — packed `VMUICONS.VMS` container, one
+  per VMU, holds up to 16 icon entries in a single file with a
+  versioned `"VMIL"` header. Each entry: name, description,
+  timestamp, flags, full palette + color/mono bitmaps.
+- **VMS format module** — byte-level ICONDATA_VMS encode/decode
+  ported from `dreamcast-icon-maker`'s JS implementation; generic
+  save icon extract (palette at 0x60, bitmap at 0x80) for any VMS
+  file; CRC helper for the library wrapper.
+- **Keyboard polling modernized** — switched from the deprecated
+  `kbd_state.matrix[]` / `shift_keys` to the modern `cond.keys[]`
+  / `last_modifiers.raw` API. Tester display now shows actually-
+  pressed scancodes rather than scancode-indexed bitmask leftovers.
+
+### Known follow-ups (v0.2.x)
+
+- DC keyboard + on-screen keyboard for editing the save description
+  (canvas stores it; OSK widget needed to enter it without a
+  physical keyboard).
+- Animated-icon preview for multi-frame saves in the browser.
+- Per-action confirmation modal on Apply when backup-on-replace
+  fires (currently silent).
+
 ## v0.1.1 — 2026-05-17
 
 Smoke-tested on Flycast. Polishes the controller tester and wires

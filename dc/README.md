@@ -101,11 +101,20 @@ dimmed copy of whatever mode is active so the player knows it's a modal,
 not a navigation.
 
 The Controller Tester is the default landing mode (matches every other
-console in this repo). The VMU Icon Editor is a stub in v0.1 that
-displays "Coming in v0.2"; v0.2 lights up the full editor (drawable
-32×32 color + mono canvas, palette editor, VMU file browser, library
-saves, apply-as-`ICONDATA_VMS` with backup-on-replace). About shows
-version, KOS commit, detected cable type, BIOS region.
+console in this repo). As of v0.2, the menu offers four modes:
+
+- **Controller Tester** — the per-port live readout described above.
+- **VMU Icon Editor** — 32×32 color + mono drawable canvas with the
+  unified cursor (analog or DC mouse), 16-color palette strip,
+  paint / erase / fill / pick tools, 32-deep undo. Start opens the
+  target picker; A writes `ICONDATA_VMS` to the selected VMU.
+  Backup-on-replace stashes any existing icon into the per-VMU
+  library save before overwriting.
+- **VMU Save Browser** — enumerates every save on every detected
+  VMU with thumbnail decode. A loads an icon into the editor;
+  Y applies it directly to its source VMU's `ICONDATA_VMS`; X
+  refreshes the list. Read-only on game saves.
+- **About** — version, detected cable, region, mode.
 
 ## VGA detection
 
