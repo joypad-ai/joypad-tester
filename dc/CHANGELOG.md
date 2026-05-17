@@ -1,5 +1,29 @@
 # Joypad Tester — Dreamcast — Changelog
 
+## v0.1.1 — 2026-05-17
+
+Smoke-tested on Flycast. Polishes the controller tester and wires
+the previously-stubbed peripheral exercises.
+
+### Highlights
+
+- Tester slot label now shows live VMU free-block count (`VMU 196`
+  format) refreshed every ~0.5s via `vmufs_free_blocks` +
+  `vmufs_root_read`.
+- Hold **B** on a port with a VMU writes the Joypad Tester "JT"
+  wordmark to that VMU's LCD via `vmu_draw_lcd_xbm`.
+- Hold **Y** on a port with a VMU clock reads `vmu_get_datetime` and
+  displays `S<n> RTC: YYYY-MM-DD HH:MM:SS` beneath the port row.
+- Render pipeline fixes for single-buffered framebuffer flicker:
+  bfont draws in opaque mode (per-glyph background repaint, no
+  per-frame `memset`); options menu and active mode are
+  mutually-exclusive layers per frame instead of racing; vblank wait
+  happens before draw rather than after.
+- Per-port row format trimmed to 50 chars to fit in 640px and stop
+  wrapping onto the next port's row.
+- About page layout: URL moved up 32px so it stops overlapping the
+  footer hint.
+
 ## v0.1.0 — 2026-05-14
 
 First release. Bring-up of the Dreamcast joypad tester app via the

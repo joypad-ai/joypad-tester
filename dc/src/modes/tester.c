@@ -19,8 +19,10 @@
 #include <dc/maple.h>
 #include <dc/maple/controller.h>
 #include <dc/maple/purupuru.h>
+#include <dc/maple/vmu.h>
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
 
 #include "tester.h"
 #include "../ports/ports.h"
@@ -28,6 +30,36 @@
 
 static void tester_enter(void) { /* nothing yet */ }
 static void tester_leave(void) { /* nothing yet */ }
+
+/* 48x32 1bpp test pattern pushed to the VMU LCD when the user holds B.
+ * Generated once at first invocation: filled outer border + a centered
+ * "JT" wordmark. Each row is 6 bytes (LSB-first per XBM convention). */
+static char vmu_lcd_pattern[48 * 32 / 8];
+static int  vmu_lcd_pattern_ready = 0;
+
+static void set_pixel(int x, int y)
+{
+    if (x < 0 || x >= 48 || y < 0 || y >= 32) return;
+    vmu_lcd_pattern[y * 6 + (x / 8)] |= (1 << (x % 8));
+}
+
+static void build_vmu_lcd_pattern(void)
+{
+    memset(vmu_lcd_pattern, 0, sizeof(vmu_lcd_pattern));
+    /* Solid 1px outer frame. */
+    for (int x = 0; x < 48; x++) { set_pixel(x, 0); set_pixel(x, 31); }
+    for (int y = 0; y < 32; y++) { set_pixel(0, y); set_pixel(47, y); }
+    /* "J": a 7x14 letter at x=10..16, y=9..22. */
+    for (int x = 10; x <= 16; x++) set_pixel(x, 9);    /* top bar */
+    for (int y = 9;  y <= 19; y++) set_pixel(15, y);   /* stem */
+    for (int x = 10; x <= 15; x++) set_pixel(x, 22);   /* bottom curl */
+    set_pixel(10, 21);
+    set_pixel(10, 20);
+    /* "T": 7x14 letter at x=24..30, y=9..22. */
+    for (int x = 24; x <= 30; x++) set_pixel(x, 9);    /* top bar */
+    for (int y = 9;  y <= 22; y++) set_pixel(27, y);   /* stem */
+    vmu_lcd_pattern_ready = 1;
+}
 
 static void actuate_rumble(int port_idx, int slot_idx)
 {
@@ -39,6 +71,33 @@ static void actuate_rumble(int port_idx, int slot_idx)
      * in the standard Sega encoding. 0x10F419F0 is a moderate
      * short pulse — same value documented in KOS purupuru example. */
     purupuru_rumble_raw(dev, 0x10F419F0);
+}
+
+static void actuate_lcd(int port_idx, int slot_idx)
+{
+    maple_device_t *dev = maple_enum_dev(port_idx, slot_idx + 1);
+    if (!dev || !dev->valid) return;
+    if (!(dev->info.functions & MAPLE_FUNC_LCD)) return;
+    if (!vmu_lcd_pattern_ready) build_vmu_lcd_pattern();
+    /* vmu_draw_lcd takes a raw bitmap (192 bytes for 48x32 @ 1bpp). */
+    vmu_draw_lcd(dev, vmu_lcd_pattern);
+}
+
+static void read_rtc(int port_idx, int slot_idx, jt_slot_state_t *slot)
+{
+    maple_device_t *dev = maple_enum_dev(port_idx, slot_idx + 1);
+    if (!dev || !dev->valid) return;
+    if (!(dev->info.functions & MAPLE_FUNC_CLOCK)) return;
+    time_t unix_time = 0;
+    if (vmu_get_datetime(dev, &unix_time) != 0) return;
+    struct tm *t = localtime(&unix_time);
+    if (!t) return;
+    slot->rtc_year = t->tm_year + 1900;
+    slot->rtc_mon  = t->tm_mon  + 1;
+    slot->rtc_day  = t->tm_mday;
+    slot->rtc_hour = t->tm_hour;
+    slot->rtc_min  = t->tm_min;
+    slot->rtc_sec  = t->tm_sec;
 }
 
 static void tester_update(float dt)
@@ -62,14 +121,30 @@ static void tester_update(float dt)
                 slot->rumble_active = true;
             }
             if (slot->kind == JT_SLOT_VMU && slot->has_lcd && (btns & CONT_B)) {
-                /* LCD write stub: slot flag flips, v0.2 wires the
-                 * actual vmu_draw_lcd_xbm() with the Joypad logo. */
+                actuate_lcd(p, s);
                 slot->lcd_test_active = true;
             }
             if (slot->kind == JT_SLOT_VMU && slot->has_clock && (btns & CONT_Y)) {
+                read_rtc(p, s, slot);
                 slot->clock_test_active = true;
             }
         }
+    }
+}
+
+static void format_slot_label(char *buf, size_t cap, jt_slot_state_t *slot)
+{
+    /* 8-char budget. Pack the most informative summary per kind:
+     *   VMU + known free blocks -> "VMU NNN " (free count)
+     *   VMU, blocks unknown     -> "VMU"
+     *   Purupuru (rumble live)  -> "Puru*"
+     *   anything else           -> kind name (truncated by %-8.8s) */
+    if (slot->kind == JT_SLOT_VMU && slot->block_free >= 0) {
+        snprintf(buf, cap, "VMU %d", slot->block_free);
+    } else if (slot->kind == JT_SLOT_PURUPURU) {
+        snprintf(buf, cap, "Puru%s", slot->rumble_active ? "*" : "");
+    } else {
+        snprintf(buf, cap, "%s", jt_slot_kind_name(slot->kind));
     }
 }
 
@@ -78,13 +153,9 @@ static void draw_port_row(int p, int y)
     jt_port_state_t *port = &jt_ports[p];
     const char port_label = 'A' + p;
 
-    char slot1[32], slot2[32];
-    snprintf(slot1, sizeof(slot1), "%s%s",
-             jt_slot_kind_name(port->slots[0].kind),
-             port->slots[0].rumble_active ? "*" : "");
-    snprintf(slot2, sizeof(slot2), "%s%s",
-             jt_slot_kind_name(port->slots[1].kind),
-             port->slots[1].rumble_active ? "*" : "");
+    char slot1[16], slot2[16];
+    format_slot_label(slot1, sizeof(slot1), &port->slots[0]);
+    format_slot_label(slot2, sizeof(slot2), &port->slots[1]);
 
     /* Format budget: 640px / 12px-per-char = 53 chars max per row.
      * Compact labels (Sty/S1/S2) + 8-char fields = exactly 50 chars.
@@ -137,6 +208,21 @@ static void draw_port_row(int p, int y)
             break;
         }
         default: break;
+    }
+
+    /* Optional 3rd detail line: surface RTC reading from any VMU slot
+     * on this port whose clock test just fired. Mouse / keyboard styles
+     * already use y+24; this lives at y+72 so it never collides. */
+    for (int s = 0; s < JT_NUM_SLOTS; s++) {
+        jt_slot_state_t *slot = &port->slots[s];
+        if (slot->kind == JT_SLOT_VMU && slot->has_clock && slot->clock_test_active) {
+            jt_text(8, y + 72, JT_COL_GREEN, JT_COL_BLACK,
+                    "S%d RTC: %04d-%02d-%02d %02d:%02d:%02d",
+                    s + 1,
+                    slot->rtc_year, slot->rtc_mon,  slot->rtc_day,
+                    slot->rtc_hour, slot->rtc_min,  slot->rtc_sec);
+            break;
+        }
     }
 }
 

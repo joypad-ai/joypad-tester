@@ -66,6 +66,9 @@ typedef struct {
     bool    rumble_active;
     bool    lcd_test_active;
     bool    clock_test_active;
+    /* Most recent VMU clock reading (when has_clock + clock test fired).
+     * Zero-filled until first read. */
+    int     rtc_year, rtc_mon, rtc_day, rtc_hour, rtc_min, rtc_sec;
 } jt_slot_state_t;
 
 typedef struct {

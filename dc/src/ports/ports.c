@@ -13,11 +13,20 @@
 #include <dc/maple/keyboard.h>
 #include <dc/maple/vmu.h>
 #include <dc/maple/purupuru.h>
+#include <dc/vmufs.h>
 #include <string.h>
+#include <time.h>
 
 #include "ports.h"
 
 jt_port_state_t jt_ports[JT_NUM_PORTS];
+
+/* VMU block counts come from a maple round-trip that costs ~16ms per
+ * read. Refresh only every Nth poll so the rest of the frame loop
+ * stays cheap. At 60fps + N=30 this is ~2 reads/sec, plenty for
+ * the live tester display. */
+#define VMU_REFRESH_INTERVAL 30
+static uint32_t poll_counter = 0;
 
 static jt_port_style_t style_from_func(uint32_t func)
 {
@@ -80,6 +89,9 @@ static void poll_kbd(jt_port_state_t *port, maple_device_t *dev)
 
 void jt_ports_poll(void)
 {
+    poll_counter++;
+    bool refresh_vmu_blocks = (poll_counter % VMU_REFRESH_INTERVAL) == 0;
+
     for (int p = 0; p < JT_NUM_PORTS; p++) {
         jt_port_state_t *port = &jt_ports[p];
 
@@ -118,11 +130,25 @@ void jt_ports_poll(void)
             slot->kind = slot_kind_from_func(sub->info.functions);
             slot->has_lcd   = (sub->info.functions & MAPLE_FUNC_LCD)   != 0;
             slot->has_clock = (sub->info.functions & MAPLE_FUNC_CLOCK) != 0;
-            /* Block counts: VMU reports them via vmufs_*; populating
-             * here is deferred to v0.2 (the editor mode needs them
-             * authoritatively; the tester view just shows the type). */
-            slot->block_free  = -1;
-            slot->block_total = -1;
+
+            /* VMU block counts. vmufs_root_read + vmufs_free_blocks
+             * cost a maple round-trip each. Refresh on first detect
+             * (block_total == -1) and on the throttled cadence; the
+             * result rarely changes mid-frame anyway. */
+            if (slot->kind == JT_SLOT_VMU &&
+                (refresh_vmu_blocks || slot->block_total < 0)) {
+                vmu_root_t root;
+                if (vmufs_root_read(sub, &root) == 0) {
+                    slot->block_total = root.blk_cnt;
+                } else {
+                    slot->block_total = -1;
+                }
+                int fb = vmufs_free_blocks(sub);
+                slot->block_free = (fb >= 0) ? (int16_t)fb : -1;
+            } else if (slot->kind != JT_SLOT_VMU) {
+                slot->block_free  = -1;
+                slot->block_total = -1;
+            }
         }
     }
 }
