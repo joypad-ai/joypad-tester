@@ -1,32 +1,75 @@
 # Joypad Tester — Nintendo 64 — Changelog
 
-## v0.1.0 — unreleased
+## v1.0.0 — 2026-05-19
 
-First release. Forks Christopher Bonhage (meeq)'s
-[JoypadTest-N64](https://github.com/meeq/JoypadTest-N64) (public domain)
-as the baseline N64 + GameCube controller + accessory matrix, and adds
-the cross-console GBA-over-Joybus path (probe + Kawasedo-encrypted
-multiboot upload) so a single ROM tests every Joybus-speaking device
-that can land on an N64 controller port.
+First public release. Joint v1.0.0 cut alongside the other consoles.
+Tests every Joybus device class that lands on an N64 controller port:
+N64 pads, GameCube pads (passive adapter), the N64 Mouse, the Voice
+Recognition Unit, every controller-pak accessory (Rumble, Memory,
+Transfer Pak, Bio Sensor, Snap Station), and a GBA in JOYBUS mode
+via the GameCube / GBA link cable. Built on LibDragon trunk and
+meeq's now-upstreamed joypad subsystem, with a mode-switcher
+scaffold copied from the dc/ subdir.
 
 ### Highlights
 
-- Full meeq device matrix: standard N64 pad, GameCube pad (via
-  passive 3-pin adapter), Rumble Pak, Controller Pak, Transfer Pak
-  with Game Boy cartridge introspection, Bio Sensor, Snap Station,
-  GB Camera.
-- GBA Joybus probe: per-port `0xff` identify command, recognising
-  the `0x04 0x00` reply as "GBA in JOYBUS mode" so users with a
-  GameCube-GBA link cable + N64-port adapter can verify the
-  GBA-side handshake without burning a separate test ROM.
-- GBA multiboot uploader: ports the Kawasedo handshake + stream
-  cipher + 0x14 post-boot poll from
-  [`gcn/ppc/gba.c`](../gcn/ppc/gba.c) (libogc SI_Transfer flavor)
-  onto LibDragon's `joybus_exec_command`. Embeds
-  [`gba/build/tester/tester_mb.gba`](../gba/build/tester) as
-  `gba_payload[]` and uploads on the user's request, putting the
-  GBA into JOYBUS mode and then polling it as a fifth virtual
-  joypad — same artifact the GameCube tester uses.
+- **Controller Tester** (landing screen): live per-port grid with a
+  GC/DC-style layout — Type + Pak + Rumble header, Stick / C-Stick /
+  L-Trig / R-Trig analog row, A/B/X/Y/L/R/Z/Start button row,
+  D-pad + C-pad row. Held buttons render yellow against dim unheld
+  labels; port headers turn green when connected. Layout is per-
+  controller-aware: **N64 pads** drop the GCN-only `C-Stick` and
+  `X/Y` buttons, **GameCube pads** drop the N64-only digital `C-pad`
+  (since GCN uses the analog C-Stick instead).
+  Special-case device rows:
+  - **N64 Mouse**: running absolute position + per-frame delta in
+    place of the analog/buttons rows.
+  - **N64 VRU / GBA**: identifier-aware labels alongside the Type
+    column even when libdragon's `joypad_style_t` returns `NONE`.
+  - **Bio Sensor**: live BPM streaming via meeq's pulse-decoder
+    algorithm (ported onto libdragon's sync `joybus_accessory_read`),
+    plus a `Pulse: PULSING / Resting` indicator — rendered above the
+    pad's regular button rows, not in place of them.
+  - **Transfer Pak**: inline GB cartridge header peek (title +
+    cart_type / rom_size / ram_size codes).
+  - **GBA in JOYBUS mode**: Kawasedo handshake + multiboot upload
+    fires automatically as soon as the link cable is detected (no
+    button press needed, matches the gcn tester). A `-2` ready
+    timeout backs off and auto-retries instead of parking in
+    `BootFail`. Detection is sticky across libdragon's per-frame
+    identifier flicker, and the boot uses a byte-order-agnostic
+    direct Joybus probe. Once booted, REG_KEYINPUT is decoded onto
+    the same row.
+  - **Rumble**: every pad that supports rumble shakes its own motor
+    while *its own* A button is held — covers both N64 pads with a
+    Rumble Pak attached and GameCube pads with their built-in motor.
+    No separate rumble-test mode.
+- **Controller Pak Browser**: per-port note list via libdragon's
+  `mempak_*` (name, blocks, region, game code).
+- **GB Camera Viewer**: detects a GB Camera cartridge through a
+  Transfer Pak, drives the GB Camera ASIC's capture-state register,
+  reads the 128×112 raw planar frame, decodes to RGBA32, and renders
+  the captured photo on screen in the authentic 4-shade DMG-green
+  palette. A button triggers a fresh capture.
+- **Snap Station Test**: protocol exerciser for builders of homebrew
+  Snap Station replicas. Detects the accessory, probes the device,
+  and exposes meeq's full Joybus state-machine command map
+  (Pre-Save / Post-Save / Reset / Pre-Roll / Capture / Post-Roll +
+  Read State).
+- **About**: version + credits + repo URL.
+- **Idle screensaver**: after 30 s of zero input across all ports,
+  switches to a bouncing 76×64 Joypad logo silhouette in the
+  canonical 7-color wall-bounce cycle (matches gcn / pce / gba / dc /
+  3do). Auto-scales 2× horizontally to compensate for N64's
+  anamorphic 320×240 framebuffer. Wakes on any pad button, any
+  Mouse delta (no deadzone), or any GBA button via the link cable.
+- **Options menu** scaffold (dc-style): Start+Down opens the modal
+  in Tester mode (so Start alone stays a controller input there);
+  any other screen opens with bare Start. D-pad navigates, A
+  confirms, Start closes.
+- **Colored text rendering** via a small `ui/text.{c,h}` helper on
+  top of `graphics_draw_text` — per-segment foreground colour
+  through `graphics_make_color`, surface-format-agnostic.
 
 Full feature breakdown + build / loading instructions in
 [`n64/README.md`](https://github.com/joypad-ai/joypad-tester/blob/main/n64/README.md).

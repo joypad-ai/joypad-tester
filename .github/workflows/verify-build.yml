@@ -49,9 +49,17 @@ jobs:
             image: ""
             artifacts: |
               dc/build/joypad-tester-dreamcast.cdi
+          - console: n64
+            # LibDragon trunk built from source on top of the
+            # libdragon toolchain image -- see the Build (N64) step.
+            # The base image is amd64-only; ubuntu-latest CI runs are
+            # already amd64 so --platform=linux/amd64 is a no-op there.
+            image: ""
+            artifacts: |
+              n64/build/joypad-tester.z64
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           submodules: recursive
           fetch-depth: 0
@@ -154,8 +162,27 @@ jobs:
             joypad-tester-kos:ci \
             make
 
+      - name: Build (N64)
+        if: matrix.console == 'n64'
+        run: |
+          # libdragon trunk gets compiled on top of the upstream
+          # toolchain image (~5 min first run, layer-cached after).
+          # The make_logo.py asset step needs Pillow for PNG decode.
+          pip install --quiet Pillow
+          cd n64
+          mkdir -p build
+          docker build --platform=linux/amd64 -t joypad-tester-n64:ci buildtools/
+          python3 buildtools/make_logo.py
+          docker run --rm \
+            --platform=linux/amd64 \
+            -v "$(pwd):/work" \
+            -u "$(id -u):$(id -g)" \
+            joypad-tester-n64:ci \
+            make
+          cp -f joypad-tester.z64 build/joypad-tester.z64
+
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: ${{ matrix.console }}-${{ github.sha }}
           path: ${{ matrix.artifacts }}

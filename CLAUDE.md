@@ -73,6 +73,23 @@ Existing console subdirs at time of writing:
   Toolchain (KOS + dc-chain sh4-elf gcc) is built from source inside
   `dc/buildtools/Dockerfile` (~10-15 min first build, layer-cached
   after).
+- `n64/` — Nintendo 64 test app (LibDragon trunk, builds `.z64`).
+  Forks meeq/JoypadTest-N64 (public domain) for the joypad subsystem
+  (now upstreamed into LibDragon trunk) and adopts the dc/ Options-
+  menu scaffold for secondary modes (Controller Pak browser, GB
+  Camera viewer, Snap Station protocol exerciser, About). Tester
+  mode detects N64 + GameCube pads, N64 Mouse, the VRU, Rumble /
+  Controller / Transfer Pak with GB cart header peek, Bio Sensor
+  (live BPM streaming), and GBA-in-JOYBUS-mode via the GameCube /
+  GBA link cable. GBA multiboot is ported from `gcn/ppc/gba.c` onto
+  libdragon's `joybus_exec_cmd`, so the same `tester_mb.gba` payload
+  the GameCube tester uses also boots from N64. Origin: MIT
+  (original `n64/src/`) over LibDragon (public domain) and meeq's
+  library (public domain); `n64/LICENSE.md`. Toolchain (libdragon
+  trunk on top of `ghcr.io/dragonminded/libdragon` amd64 image) is
+  built from source inside `n64/buildtools/Dockerfile` (~5 min first
+  build, layer-cached after); runs under `--platform=linux/amd64` on
+  Apple Silicon hosts.
 
 ## Console subdir conventions
 
@@ -130,6 +147,108 @@ only when the console has that surface; everything else is required.
 copy its skeleton and fill each section in — don't reorder or rename
 headings, because the top-level README and CLAUDE.md both reference
 them.
+
+### UI / UX conventions (every console)
+
+These on-screen patterns are shared across all consoles in the repo
+so the tester apps feel like a set. **Match these exactly when adding
+a new console — do not redesign them.** When in doubt, copy from
+`gcn/` or `pce/`, not from training-data instincts.
+
+1. **Controller tester is the landing screen.** Every tester opens
+   directly into the per-port live readout grid. This is the core
+   product; extra modes (icon editor, file manager, etc) are
+   secondary and live behind an options menu.
+
+2. **Per-port live readout layout.** All ports rendered live and
+   simultaneously, no active-port toggle. Each port row shows
+   controller style + accessory/pak detection + a live state line
+   (buttons / stick / triggers / scancodes / mouse deltas as
+   appropriate). Fields a controller doesn't have stay at zero —
+   never blank them out. See `gcn/README.md`'s `What it tests`
+   section for the canonical ASCII example.
+
+3. **Idle screensaver = bouncing color-cycle Joypad logo
+   *silhouette sprite*.** After ~30 seconds (1800 frames @ 60Hz) of
+   no user input, the screen clears to black and the Joypad logo
+   silhouette starts bouncing. Each wall hit advances a 7-color
+   cycle (red → green → yellow → cyan → white → orange → hot pink,
+   skip dim blues — they read poorly on CRTs). Any input wakes it.
+   **Use the actual logo sprite, not bfont text.** This is the
+   most-repeated mistake LLMs make in this repo: instinct says
+   "render some text" and the right answer is "blit the silhouette
+   mask in the cycle color".
+
+4. **Logo asset pipeline + render colors.** Source PNG lives at
+   `<console>/assets/logo.png` (or per-console `screensaver-logo.png`
+   override). A `<console>/buildtools/make_logo.py` script crops it
+   to its silhouette bbox and packs it into a console-native sprite
+   format inside a generated header (PCE: 4× 32×32 4bpp planar; GCN:
+   1-bit alpha mask; DC: 1-bit MSB-first packed mask). The generated
+   header sits next to the source code that consumes it
+   (`src/.../gen_logo.h`, `ppc/gen_logo.h`, etc.) and is committed.
+   Run the script as part of the build or CI; the resulting header
+   is `.gitignore`d on consoles where it's purely a build artifact
+   and committed on consoles where downstream consumers need it
+   pre-generated. **Color convention**: the SAME mask gets used in
+   two places with different tinting — bouncing screensaver renders
+   it in the active *cycle color* (changes on each wall hit);
+   static About-page placement renders it in plain *white*. Never
+   the other way around.
+
+5. **Options menu (for testers with secondary modes).** Modal
+   overlay invoked by **Start+Down** in the controller tester
+   (so Start alone stays testable as a button) or **Start alone**
+   in any other mode. Solid black box with a 2-px yellow border;
+   D-pad navigates; **A** confirms; **B** cancels. Mode order
+   shows the tester first, accessory modes in the middle, **About
+   last**. See `dc/src/ui/options_menu.c` for the canonical
+   implementation, including the "open cooldown" trick that
+   prevents bouncing controllers from doubling the open-press as
+   a confirm.
+
+6. **Footer hint lines pin to the bottom.** A green-text reminder
+   like `"Start: options menu"` (or `"Hold Start+Down for options
+   menu"` in the controller tester) lives at the very bottom row
+   of the screen, centered. Above it, optional grey-text per-mode
+   control hints. Both fit in the screen's character budget (no
+   text wrapping onto unintended rows). On 640×480 with 12 px/char,
+   that's 53 chars max.
+
+7. **Version comes from `<console>/VERSION`.** Inject it into the
+   binary via the Makefile (`-DJT_VERSION_STR="$(VERSION)"`) so the
+   on-screen version stays in sync without anyone editing source.
+   See `dc/Makefile` for the pattern. Display the version on the
+   controller tester title row and the About page.
+
+8. **About page layout (every console with an Options menu).**
+   Standardize on this top-to-bottom order so the About page feels
+   the same across all consoles:
+   - **Logo sprite, white, centered horizontally at the top.** Same
+     `gen_logo.h` mask the screensaver uses, but always rendered in
+     `JT_COL_WHITE` (or the platform's equivalent) — not cycled.
+     White reads as a static / definitive brand mark; the cycle
+     colors are reserved for the screensaver's motion.
+   - **Title line** below the logo: e.g.
+     `Joypad Tester - <Console>` in yellow.
+   - **Version line** in white: `Version <X.Y.Z>`.
+   - **Platform / toolchain credit** in cyan: e.g.
+     `Built on KallistiOS`.
+   - **Detected hardware state lines** in grey: video / region /
+     refresh / cable / region-specific quirks.
+   - **github URL** near the bottom in grey.
+   - **Footer hint** in green at y=456: `Start: options menu`.
+   See `dc/src/modes/about.c` for the reference layout.
+
+9. **Single-buffered framebuffers need flicker discipline.** Where
+   the platform's default video mode is single-buffered (DC, etc.):
+   draw widgets in opaque mode so they self-overpaint each frame
+   without needing a global clear; gate heavy redraws on a "dirty"
+   flag tied to actual state changes; vsync *before* drawing, not
+   after; for moving sprites use save-and-restore of the underlying
+   pixels (`dc/src/modes/vmu_editor.c`'s cursor backing is the
+   reference). Avoid per-frame full-buffer clears — they cause a
+   beam-race black flash.
 
 ### Build outputs
 

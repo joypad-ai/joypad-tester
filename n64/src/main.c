@@ -1,265 +1,145 @@
 /*
- * Joypad Tester - Nintendo 64
+ * main.c — Joypad Tester N64 entry point + mode dispatcher.
  *
- * Forked from Christopher Bonhage (meeq)'s JoypadTest-N64 example
- * (public domain), retargeted to LibDragon trunk's joypad subsystem
- * and laid out to match the GameCube tester (per-port row block:
- * Port N Style/Pak/Rumble line, then Stick + button rows). Adds:
- *  - GBA-on-Joybus identification + Kawasedo multiboot upload from
- *    the embedded gba_payload[] (see src/gba.c).
- *  - N64 Mouse delta accumulation into an absolute position.
- *  - Transfer Pak Game Boy cartridge header peek (title + sizes).
- *  - Idle screensaver: 76x64 bouncing joypad logo (see screensaver.c).
+ * Boot order:
+ *   1. timer + display + joypad init.
+ *   2. console (text-mode renderer used by all current modes).
+ *   3. Options menu init.
+ *   4. Active mode's enter() called.
+ *   5. Frame loop:
+ *      a. joypad_poll().
+ *      b. screensaver_idle_tick().
+ *      c. jt_options_menu_update() — Start+D-pad-Down toggles.
+ *      d. apply_mode_switch() if the menu confirmed a new mode.
+ *      e. If screensaver active, screensaver_render().
+ *         Else if menu visible, jt_options_menu_draw().
+ *         Else current mode's update() + draw().
+ *
+ * Modes live in src/modes/<name>.{c,h} and register a const jt_mode_t
+ * entry in mode_table[] below. See src/app.h for the contract and
+ * src/ui/options_menu.{c,h} for the picker.
  *
  * Copyright (c) 2026 Robert Dale Smith
  * MIT License -- see ../LICENSE.md
  */
 
-#include <string.h>
 #include <libdragon.h>
 
-#include "gba.h"
-#include "mouse.h"
+#include "app.h"
 #include "screensaver.h"
-#include "tpak_info.h"
+#include "modes/tester.h"
+#include "ui/options_menu.h"
+#include "modes/about.h"
+#include "modes/cpak.h"
+#include "modes/gbc.h"
+#include "modes/snap.h"
+#include "modes/tester.h"
 
-/* Track per-port GBA-boot status so we can display "Booting...",
- * "Booted OK", or "Boot failed (code -N)" inline with the port row. */
-typedef enum {
-    GBA_STATE_IDLE = 0,
-    GBA_STATE_BOOTING,
-    GBA_STATE_BOOTED,
-    GBA_STATE_FAILED,
-} gba_state_t;
+jt_mode_id_t        jt_current_mode = JT_MODE_TESTER;
+static jt_mode_id_t pending_mode    = JT_MODE_TESTER;
 
-static gba_state_t gba_state[JOYBUS_PORT_COUNT];
-static int         gba_last_err[JOYBUS_PORT_COUNT];
-static uint8_t     gba_last_input[JOYBUS_PORT_COUNT][2];
+static const jt_mode_t * const mode_table[JT_MODE_COUNT] = {
+    [JT_MODE_TESTER] = &jt_mode_tester,
+    [JT_MODE_CPAK]   = &jt_mode_cpak,
+    [JT_MODE_GBC]    = &jt_mode_gbc,
+    [JT_MODE_SNAP]   = &jt_mode_snap,
+    [JT_MODE_ABOUT]  = &jt_mode_about,
+};
 
-/* Cached previous accessory so we can flush per-port helpers when an
- * accessory is removed. */
-static joypad_accessory_type_t prev_acc[JOYBUS_PORT_COUNT];
-
-/* Match the column widths of the GameCube tester's printf templates
- * so the layout reads identically across the two ROMs. */
-static const char *style_label(joypad_style_t s, joybus_identifier_t id)
+void jt_request_mode(jt_mode_id_t next)
 {
-    /* GBA-on-Joybus doesn't have a joypad_style_t -- it falls through
-     * to JOYPAD_STYLE_NONE -- so we override the label off the raw
-     * identifier when we see one. */
-    if (id == JOYBUS_IDENTIFIER_GBA_LINK_CABLE) return "GBA    ";
-    switch (s) {
-        case JOYPAD_STYLE_N64:   return "N64    ";
-        case JOYPAD_STYLE_GCN:   return "GCN    ";
-        case JOYPAD_STYLE_MOUSE: return "Mouse  ";
-        case JOYPAD_STYLE_NONE:
-        default:                 return "None   ";
-    }
+    if (next < 0 || next >= JT_MODE_COUNT) return;
+    pending_mode = next;
 }
 
-static const char *pak_label(joypad_accessory_type_t a)
+bool jt_any_input_this_frame(void)
 {
-    switch (a) {
-        case JOYPAD_ACCESSORY_TYPE_CONTROLLER_PAK: return "Memory      ";
-        case JOYPAD_ACCESSORY_TYPE_RUMBLE_PAK:     return "Rumble Pak  ";
-        case JOYPAD_ACCESSORY_TYPE_TRANSFER_PAK:   return "Transfer Pak";
-        case JOYPAD_ACCESSORY_TYPE_BIO_SENSOR:     return "Bio Sensor  ";
-        case JOYPAD_ACCESSORY_TYPE_SNAP_STATION:   return "Snap Station";
-        case JOYPAD_ACCESSORY_TYPE_NONE:
-        default:                                   return "None        ";
+    JOYPAD_PORT_FOREACH (port) {
+        joypad_buttons_t held = joypad_get_buttons_held(port);
+        if (held.a || held.b || held.x || held.y || held.l || held.r ||
+            held.z || held.start ||
+            held.d_up || held.d_down || held.d_left || held.d_right ||
+            held.c_up || held.c_down || held.c_left || held.c_right) {
+            return true;
+        }
+        joypad_inputs_t in = joypad_get_inputs(port);
+        if (joypad_get_style(port) == JOYPAD_STYLE_MOUSE) {
+            /* Mouse: stick_x/stick_y are per-frame deltas (signed),
+             * not analog deflection. Any non-zero delta = motion. */
+            if (in.stick_x != 0 || in.stick_y != 0) return true;
+        } else {
+            /* Analog stick / trigger deadzone -- N64 stick centres
+             * around 0 with ~80 max so 8 comfortably ignores noise. */
+            const int DEAD = 8;
+            if (in.stick_x  > DEAD || in.stick_x  < -DEAD) return true;
+            if (in.stick_y  > DEAD || in.stick_y  < -DEAD) return true;
+            if (in.cstick_x > DEAD || in.cstick_x < -DEAD) return true;
+            if (in.cstick_y > DEAD || in.cstick_y < -DEAD) return true;
+            if (in.analog_l > DEAD || in.analog_r > DEAD)  return true;
+        }
     }
-}
-
-static const char *rumble_label(bool supported, bool active)
-{
-    if (!supported) return "Unavailable";
-    if (active)     return "Active     ";
-    return "Idle       ";
-}
-
-/* True if the port's state shows any non-trivial activity. Used to
- * decide whether to reset the idle-screensaver counter. */
-static bool port_has_input(joypad_port_t port)
-{
-    joypad_buttons_t held = joypad_get_buttons_held(port);
-    if (held.a || held.b || held.x || held.y || held.l || held.r ||
-        held.z || held.start ||
-        held.d_up || held.d_down || held.d_left || held.d_right ||
-        held.c_up || held.c_down || held.c_left || held.c_right) {
-        return true;
-    }
-    joypad_inputs_t in = joypad_get_inputs(port);
-    const int DEAD = 8;
-    if (in.stick_x  > DEAD || in.stick_x  < -DEAD) return true;
-    if (in.stick_y  > DEAD || in.stick_y  < -DEAD) return true;
-    if (in.cstick_x > DEAD || in.cstick_x < -DEAD) return true;
-    if (in.cstick_y > DEAD || in.cstick_y < -DEAD) return true;
-    if (in.analog_l > DEAD || in.analog_r > DEAD)  return true;
+    /* GBA-via-link-cable presses don't surface through libdragon's
+     * joypad inputs; the tester module owns that polling, so ask it. */
+    if (jt_tester_gba_input_active()) return true;
     return false;
 }
 
-static void print_port(joypad_port_t port)
+static void apply_mode_switch(void)
 {
-    joybus_identifier_t     id    = joypad_get_identifier(port);
-    joypad_style_t          style = joypad_get_style(port);
-    joypad_accessory_type_t acc   = joypad_get_accessory_type(port);
-    joypad_inputs_t         in    = joypad_get_inputs(port);
-    bool rumble_sup = joypad_get_rumble_supported(port);
-    bool rumble_act = joypad_get_rumble_active(port);
-
-    /* Line 1: Port N / Style / Pak / Rumble (or Boot for GBA). The
-     * GameCube tester's right-side payload swaps Rumble for Boot
-     * status when a GBA is bound; we do the same. */
-    printf("Port %d Style: %s ", port + 1, style_label(style, id));
-
-    if (id == JOYBUS_IDENTIFIER_GBA_LINK_CABLE) {
-        const char *boot;
-        switch (gba_state[port]) {
-            case GBA_STATE_BOOTED:  boot = "Booted   ";       break;
-            case GBA_STATE_BOOTING: boot = "Booting..."; break;
-            case GBA_STATE_FAILED:  boot = "BootFail "; break;
-            case GBA_STATE_IDLE:
-            default:                boot = "BootIdle "; break;
-        }
-        if (gba_state[port] == GBA_STATE_FAILED) {
-            printf("Boot: %s err%+d         \n", boot, gba_last_err[port]);
-        } else if (gba_state[port] == GBA_STATE_BOOTED) {
-            printf("Boot: %s poll %02x %02x      \n",
-                boot, gba_last_input[port][0], gba_last_input[port][1]);
-        } else {
-            printf("Boot: %s (press A to multiboot)\n", boot);
-        }
-    } else {
-        printf("Pak: %s Rumble: %s\n",
-            pak_label(acc), rumble_label(rumble_sup, rumble_act));
+    if (pending_mode == jt_current_mode) return;
+    if (mode_table[jt_current_mode]->leave) {
+        mode_table[jt_current_mode]->leave();
     }
-
-    /* No more lines for disconnected ports -- just a blank break. */
-    if (style == JOYPAD_STYLE_NONE
-        && id != JOYBUS_IDENTIFIER_GBA_LINK_CABLE) {
-        printf("\n");
-        return;
+    jt_current_mode = pending_mode;
+    if (mode_table[jt_current_mode]->enter) {
+        mode_table[jt_current_mode]->enter();
     }
-
-    /* Mouse: render absolute position alongside the per-frame delta. */
-    if (style == JOYPAD_STYLE_MOUSE) {
-        int ax, ay;
-        mouse_get(port, &ax, &ay);
-        printf("Abs: %+05d,%+05d   Delta: %+03d,%+03d\n",
-               ax, ay, in.stick_x, in.stick_y);
-        /* Mouse only has L+R buttons. libdragon maps them onto btn.a / btn.b. */
-        printf("L:%d R:%d\n\n", in.btn.a, in.btn.b);
-        return;
-    }
-
-    /* Identical column layout to gcn/ppc/main.c::print_port(). */
-    printf("Stick: %+04d,%+04d C-Stick: %+04d,%+04d L-Trig:%03u R-Trig:%03u\n",
-        in.stick_x,  in.stick_y,
-        in.cstick_x, in.cstick_y,
-        in.analog_l, in.analog_r);
-    printf("A:%d B:%d X:%d Y:%d L:%d R:%d Z:%d Start:%d\n",
-        in.btn.a, in.btn.b, in.btn.x, in.btn.y,
-        in.btn.l, in.btn.r, in.btn.z, in.btn.start);
-    printf("D-U:%d D-D:%d D-L:%d D-R:%d C-U:%d C-D:%d C-L:%d C-R:%d\n",
-        in.btn.d_up, in.btn.d_down, in.btn.d_left, in.btn.d_right,
-        in.btn.c_up, in.btn.c_down, in.btn.c_left, in.btn.c_right);
-
-    /* Transfer Pak: one-shot cart-header read, title + size codes
-     * underneath the standard port block. */
-    if (acc == JOYPAD_ACCESSORY_TYPE_TRANSFER_PAK) {
-        const tpak_info_t *t = tpak_info_read(port);
-        if (t->title[0]) {
-            printf("  GB cart: \"%s\" type:%02x rom:%02x ram:%02x%s\n",
-                t->title, t->cart_type, t->rom_size, t->ram_size,
-                t->valid ? "" : " (chksum bad)");
-        } else if (t->attempted) {
-            printf("  GB cart: no cart / header unreadable\n");
-        }
-    }
-    printf("\n");
 }
 
 int main(void)
 {
     timer_init();
     /* 320x240 is N64's standard non-interlaced framebuffer. Each fb
-     * pixel = 2 TV dots horizontally (anamorphic), so square-pixel
-     * PNGs render as horizontally squished. We compensate by using
-     * a pre-widened logo source (see assets/logo_64.png at 76x64,
-     * vendored from 3do/assets/ which solves the same problem). */
+     * pixel = 2 TV dots horizontally (anamorphic); screensaver
+     * compensates by 2x-scaling its sprite at render time. */
     display_init(RESOLUTION_320x240, DEPTH_32_BPP, 2, GAMMA_NONE,
                  FILTERS_RESAMPLE);
+    /* display_init starts the video signal immediately, but the
+     * framebuffers contain uninitialised VRAM (which renders as a red
+     * flash on the N64's VI output). Paint both buffers black before
+     * the rest of init runs so nothing leaks on cold boot. */
+    for (int i = 0; i < 2; i++) {
+        surface_t *s = display_get();
+        graphics_fill_screen(s, graphics_make_color(0, 0, 0, 0xff));
+        display_show(s);
+    }
     joypad_init();
-
     console_init();
     console_set_render_mode(RENDER_MANUAL);
     console_set_debug(false);
+    jt_options_menu_init();
+
+    if (mode_table[jt_current_mode]->enter) {
+        mode_table[jt_current_mode]->enter();
+    }
 
     while (1) {
         joypad_poll();
-
-        /* Per-port maintenance: mouse delta accumulation + Transfer
-         * Pak cache invalidation when accessories change. */
-        bool any_input = false;
-        JOYPAD_PORT_FOREACH (port) {
-            joypad_style_t          style = joypad_get_style(port);
-            joypad_accessory_type_t acc   = joypad_get_accessory_type(port);
-
-            if (style == JOYPAD_STYLE_MOUSE) mouse_tick(port);
-
-            if (prev_acc[port] == JOYPAD_ACCESSORY_TYPE_TRANSFER_PAK
-                && acc != JOYPAD_ACCESSORY_TYPE_TRANSFER_PAK) {
-                tpak_info_reset(port);
-            }
-            prev_acc[port] = acc;
-
-            if (port_has_input(port)) any_input = true;
-        }
-
-        screensaver_idle_tick(any_input);
-
-        /* GBA multiboot trigger gated to NOT run while screensaver is
-         * up so a stray wake-press doesn't also kick off an upload. */
-        if (!screensaver_active()) {
-            bool any_a_pressed = false;
-            JOYPAD_PORT_FOREACH (port) {
-                joypad_buttons_t pressed = joypad_get_buttons_pressed(port);
-                if (pressed.a) { any_a_pressed = true; break; }
-            }
-            if (any_a_pressed) {
-                JOYPAD_PORT_FOREACH (port) {
-                    if (gba_state[port] == GBA_STATE_IDLE
-                        && joypad_get_identifier(port)
-                           == JOYBUS_IDENTIFIER_GBA_LINK_CABLE) {
-                        gba_state[port] = GBA_STATE_BOOTING;
-                        int err = gba_boot_embedded(port);
-                        if (err == 0) gba_state[port] = GBA_STATE_BOOTED;
-                        else {
-                            gba_state[port] = GBA_STATE_FAILED;
-                            gba_last_err[port] = err;
-                        }
-                    }
-                }
-            }
-            JOYPAD_PORT_FOREACH (port) {
-                if (gba_state[port] == GBA_STATE_BOOTED) {
-                    gba_poll_input(port, gba_last_input[port]);
-                }
-            }
-        }
+        screensaver_idle_tick(jt_any_input_this_frame());
+        jt_options_menu_update();
+        apply_mode_switch();
 
         if (screensaver_active()) {
             screensaver_render();
+        } else if (jt_options_menu_visible()) {
+            jt_options_menu_draw();
         } else {
-            console_clear();
-
-            printf("Joypad Tester - N64\n\n");
-
-            JOYPAD_PORT_FOREACH (port) {
-                print_port(port);
+            if (mode_table[jt_current_mode]->update) {
+                mode_table[jt_current_mode]->update();
             }
-
-            console_render();
+            if (mode_table[jt_current_mode]->draw) {
+                mode_table[jt_current_mode]->draw();
+            }
         }
     }
 }

@@ -50,7 +50,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           submodules: recursive
           fetch-depth: 0
@@ -144,6 +144,22 @@ jobs:
             -u "$(id -u):$(id -g)" \
             joypad-tester-kos:release \
             make
+
+      - name: Build (N64)
+        if: needs.parse.outputs.console == 'n64'
+        run: |
+          pip install --quiet Pillow
+          cd n64
+          mkdir -p build
+          docker build --platform=linux/amd64 -t joypad-tester-n64:release buildtools/
+          python3 buildtools/make_logo.py
+          docker run --rm \
+            --platform=linux/amd64 \
+            -v "$(pwd):/work" \
+            -u "$(id -u):$(id -g)" \
+            joypad-tester-n64:release \
+            make
+          cp -f joypad-tester.z64 build/joypad-tester.z64
 
       - name: Stage release artifacts (GameCube)
         if: needs.parse.outputs.console == 'gcn'
@@ -239,6 +255,18 @@ jobs:
           cp build/joypad-tester-dreamcast.cdi "_release/joypad_tester_v${VERSION}_dc.cdi"
           ls -la _release/
 
+      - name: Stage release artifacts (N64)
+        if: needs.parse.outputs.console == 'n64'
+        working-directory: n64
+        run: |
+          # Single .z64 artifact; bootable on Ares / cen64 emulators
+          # and on real N64 hardware via EverDrive 64 / 64drive /
+          # SummerCart64 SD-card loaders.
+          VERSION="${{ needs.parse.outputs.version }}"
+          mkdir -p _release
+          cp build/joypad-tester.z64 "_release/joypad_tester_v${VERSION}_n64.z64"
+          ls -la _release/
+
       - name: Build release body
         id: notes
         working-directory: ${{ needs.parse.outputs.console }}
@@ -258,7 +286,7 @@ jobs:
           EOF
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           name: ${{ needs.parse.outputs.title }}
           body_path: ${{ needs.parse.outputs.console }}/_notes.md

@@ -86,10 +86,18 @@ void screensaver_wake(void)
 
 void screensaver_render(void)
 {
+    surface_t *surf = display_get();
+    /* Query the actual surface dimensions rather than trusting the
+     * SCREEN_W/SCREEN_H compile-time constants -- some libdragon
+     * display modes return a wider/taller surface than the nominal
+     * resolution_t (e.g. internally line-doubled buffers). The
+     * SCREEN_W constant is now just a fallback for the bounce
+     * boundary if surf->width is somehow zero. */
+    int screen_w = surf->width  ? surf->width  : SCREEN_W;
+    int screen_h = surf->height ? surf->height : SCREEN_H;
+
     /* Advance position; bounce off the four walls and cycle colour on
-     * each hit. We test against the logo's leading edge so a bounce
-     * lands the next frame's position exactly back inside the screen
-     * rather than slightly past the wall. */
+     * each hit. */
     logo_x += logo_dx;
     logo_y += logo_dy;
 
@@ -98,14 +106,12 @@ void screensaver_render(void)
     bool bounced = false;
     int  logo_w_disp = LOGO_W * 2;
     if (logo_x <= 0)                     { logo_x = 0;                    logo_dx = +1; bounced = true; }
-    if (logo_x >= SCREEN_W - logo_w_disp){ logo_x = SCREEN_W - logo_w_disp; logo_dx = -1; bounced = true; }
+    if (logo_x >= screen_w - logo_w_disp){ logo_x = screen_w - logo_w_disp; logo_dx = -1; bounced = true; }
     if (logo_y <= 0)                     { logo_y = 0;                    logo_dy = +1; bounced = true; }
-    if (logo_y >= SCREEN_H - LOGO_H)     { logo_y = SCREEN_H - LOGO_H;    logo_dy = -1; bounced = true; }
+    if (logo_y >= screen_h - LOGO_H)     { logo_y = screen_h - LOGO_H;    logo_dy = -1; bounced = true; }
     if (bounced) {
         color_ix = (color_ix + 1) % CYCLE_LEN;
     }
-
-    surface_t *surf = display_get();
     /* libdragon's graphics_make_color packs an RGBA32 into the format
      * the active surface needs. Since our LOGO_COLORS are already
      * RGBA32 we re-unpack + re-pack to be format-agnostic. */

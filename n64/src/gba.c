@@ -121,20 +121,37 @@ static uint32_t gba_crc_step(uint32_t crc, uint32_t value)
 
 bool gba_detect(int port)
 {
-    /* Use LibDragon's joypad subsystem to read the canonical 16-bit
-     * Joybus identifier rather than rolling our own unpack. The
-     * subsystem already polls every port each frame; we just grab
-     * its cached value. */
+    /* Direct Joybus 0x00 probe (status / identify). Returns 3 bytes:
+     * device-type[2] + jstat[1]. Wire pattern for a GBA in JOYBUS
+     * mode is 0x00 0x04 (or 0x04 0x00 depending on which side of the
+     * transport byte-swap you read it from). Compare on the raw
+     * bytes so we're agnostic to libdragon vs libogc unpack order.
+     *
+     * Falling back to libdragon's cached identifier covers the rare
+     * case where our probe came back zeroed (PIF transfer hiccup)
+     * but the subsystem's last successful poll saw the cable. */
+    uint8_t cmd = 0x00, r3[3] = {0};
+    joybus_exec_cmd(port, 1, 3, &cmd, r3);
+    if (r3[0] == 0x00 && r3[1] == 0x04) return true;
+    if (r3[0] == 0x04 && r3[1] == 0x00) return true;
     return joypad_get_identifier(port) == JOYBUS_IDENTIFIER_GBA_LINK_CABLE;
 }
 
 int gba_boot_embedded(int port)
 {
-    if (gba_payload_len == 0 || !gba_detect(port)) return -1;
+    /* Don't re-check gba_detect here -- the tester gates the boot
+     * trigger on its own sticky-detect cache (1s TTL), and libdragon's
+     * cached identifier flickers off briefly even when a GBA cable is
+     * physically connected. If the cable is actually gone, the
+     * handshake-status poll below will time out cleanly with -2. */
+    /* Split each pre-flight check into its own error code so a failure
+     * here is unambiguously diagnosable from the on-screen err number
+     * (-10/-11/-12) instead of merging into a generic -1. */
+    if (gba_payload_len == 0) return -10;
     const uint8_t *rom = gba_payload;
     uint32_t       len = gba_payload_len;
-    if (len == 0 || len >= 0x40000) return -1;
-    if (rom[0xac] == 0)             return -1;
+    if (len >= 0x40000)       return -11;
+    if (rom[0xac] == 0)       return -12;
 
     uint16_t type;
     uint8_t  js = 0;

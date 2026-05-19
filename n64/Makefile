@@ -9,17 +9,32 @@ TARGET    := joypad-tester
 SRCDIR    := src
 BUILD_DIR := build
 
-SRC := $(SRCDIR)/main.c        \
-       $(SRCDIR)/gba.c         \
-       $(SRCDIR)/gba_payload.c \
-       $(SRCDIR)/mouse.c       \
-       $(SRCDIR)/screensaver.c \
-       $(SRCDIR)/tpak_info.c
+# Single source of truth for the version: n64/VERSION. The string is
+# injected at compile time as JT_VERSION_STR so src/app.h's fallback
+# only kicks in for IDE builds. Same pattern as dc/.
+VERSION   := $(shell cat VERSION | tr -d '[:space:]')
+
+SRC := $(SRCDIR)/main.c             \
+       $(SRCDIR)/bio.c              \
+       $(SRCDIR)/gba.c              \
+       $(SRCDIR)/gba_payload.c      \
+       $(SRCDIR)/mouse.c            \
+       $(SRCDIR)/screensaver.c      \
+       $(SRCDIR)/tpak_info.c        \
+       $(SRCDIR)/ui/options_menu.c  \
+       $(SRCDIR)/ui/text.c          \
+       $(SRCDIR)/modes/tester.c     \
+       $(SRCDIR)/modes/cpak.c       \
+       $(SRCDIR)/modes/gbc.c        \
+       $(SRCDIR)/modes/snap.c       \
+       $(SRCDIR)/modes/about.c
 
 OBJS := $(SRC:%.c=$(BUILD_DIR)/%.o)
 DEPS := $(SRC:%.c=$(BUILD_DIR)/%.d)
 
 include $(N64_INST)/include/n64.mk
+
+N64_CFLAGS += -DJT_VERSION_STR=\"$(VERSION)\"
 
 all: $(TARGET).z64
 
