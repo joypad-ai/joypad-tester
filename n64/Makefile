@@ -33,6 +33,13 @@ SRC := $(SRCDIR)/main.c             \
 OBJS := $(SRC:%.c=$(BUILD_DIR)/%.o)
 DEPS := $(SRC:%.c=$(BUILD_DIR)/%.d)
 
+# The cross-compile half of this Makefile only works inside the
+# buildtools/ Docker container, where $(N64_INST) points at the
+# libdragon toolchain. Guard it so the file still parses on the host
+# (which has no n64.mk) -- that lets `make flash` run host-side, since
+# the USB loader talks to host hardware, not the build container.
+ifneq ($(N64_INST),)
+
 include $(N64_INST)/include/n64.mk
 
 N64_CFLAGS += -DJT_VERSION_STR=\"$(VERSION)\"
@@ -56,4 +63,21 @@ clean:
 
 -include $(DEPS)
 
-.PHONY: all clean
+else   # host (no N64 toolchain): build is delegated to Docker
+
+all:
+	@echo "Build with ./build_docker.sh (needs the libdragon toolchain)."
+
+clean:
+	rm -rf $(BUILD_DIR) $(TARGET).z64
+
+endif
+
+# Flash the built ROM to an EverDrive/64drive/SC64 over USB via
+# UNFLoader. Host-side; run AFTER ./build_docker.sh, with the cart
+# sitting at the EverDrive menu. Shared helper so other EverDrive
+# consoles can adopt the same `make flash` pattern.
+flash:
+	@../buildtools/flash.sh n64 $(BUILD_DIR)/$(TARGET).z64
+
+.PHONY: all clean flash
