@@ -74,7 +74,7 @@ static void about_draw(void)
     y += 20;
     txt_draw_centered(surf, y, COL_CYAN,  "Built on LibDragon",           screen_w);
     y += 28;
-    txt_draw_centered(surf, y, COL_GREY,  "Tests N64 / GCN pads, Mouse, VRU,",    screen_w);
+    txt_draw_centered(surf, y, COL_GREY,  "Tests N64 / GCN pads, Mouse, VRU, KB,", screen_w);
     y += 12;
     txt_draw_centered(surf, y, COL_GREY,  "Rumble / Memory / Transfer Pak,",      screen_w);
     y += 12;

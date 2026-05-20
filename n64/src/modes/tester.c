@@ -36,6 +36,7 @@
 #include "../app.h"
 #include "../bio.h"
 #include "../gba.h"
+#include "../kbd.h"
 #include "../mouse.h"
 #include "../tpak_info.h"
 #include "../ui/text.h"
@@ -92,6 +93,9 @@ static int  gba_retry_in[JOYBUS_PORT_COUNT];
 static int  gba_input_warm[JOYBUS_PORT_COUNT];
 static uint32_t boot_guard_frames = 0;
 
+/* Latest RandNet keyboard poll per port (command 0x13). */
+static kbd_state_t kbd_state[JOYBUS_PORT_COUNT];
+
 static bool is_gba_port(int port) { return gba_seen[port] > 0; }
 
 bool jt_tester_gba_input_active(void)
@@ -115,6 +119,7 @@ static const char *style_label(joypad_style_t s, joybus_identifier_t id)
      * Unit. Special-case them off the raw identifier. */
     if (id == JOYBUS_IDENTIFIER_GBA_LINK_CABLE)        return "GBA   ";
     if (id == JOYBUS_IDENTIFIER_N64_VOICE_RECOGNITION) return "VRU   ";
+    if (id == JOYBUS_IDENTIFIER_N64_RANDNET_KEYBOARD)  return "Keybd ";
     switch (s) {
         case JOYPAD_STYLE_N64:   return "N64   ";
         case JOYPAD_STYLE_GCN:   return "GCN   ";
@@ -149,7 +154,8 @@ static int draw_port(surface_t *surf, int table_x, int y, joypad_port_t port)
     bool gba_here   = is_gba_port(port);
     bool connected  = (style != JOYPAD_STYLE_NONE)
                       || gba_here
-                      || (id == JOYBUS_IDENTIFIER_N64_VOICE_RECOGNITION);
+                      || (id == JOYBUS_IDENTIFIER_N64_VOICE_RECOGNITION)
+                      || (id == JOYBUS_IDENTIFIER_N64_RANDNET_KEYBOARD);
 
     /* === Header row: Port N + Style + Pak + Rumble (or Boot). === */
     int x = table_x;
@@ -185,6 +191,8 @@ static int draw_port(surface_t *surf, int table_x, int y, joypad_port_t port)
         }
     } else if (id == JOYBUS_IDENTIFIER_N64_VOICE_RECOGNITION) {
         x = txt_draw(surf, x, y, COL_LABEL, "Voice Recognition Unit");
+    } else if (id == JOYBUS_IDENTIFIER_N64_RANDNET_KEYBOARD) {
+        x = txt_draw(surf, x, y, COL_LABEL, "RandNet Keyboard");
     } else {
         x = txt_draw(surf, x, y, COL_LABEL, "Pak: ");
         x = txt_draw(surf, x, y,
@@ -223,6 +231,35 @@ static int draw_port(surface_t *surf, int table_x, int y, joypad_port_t port)
         txt_draw(surf, table_x, y, COL_LABEL,
                  "Mic audio capture coming in v0.2+");
         return y + ROW_H * 2;
+    }
+
+    /* === RandNet keyboard: raw scancodes + status. === The JBSC code
+     * is the key's X/Y matrix coordinate (X<<8 | Y); a full
+     * scancode->ASCII map is deferred (table unpublished). */
+    if (id == JOYBUS_IDENTIFIER_N64_RANDNET_KEYBOARD) {
+        const kbd_state_t *k = &kbd_state[port];
+        x = table_x;
+        x = txt_draw (surf, x, y, COL_LABEL, "Keys: ");
+        x = txt_drawf(surf, x, y, COL_VALUE, "%d  ", k->nkeys);
+        for (int i = 0; i < KBD_MAX_KEYS; i++) {
+            if (i < k->nkeys)
+                x = txt_drawf(surf, x, y, COL_HELD, "%04X ", k->keys[i]);
+            else
+                x = txt_draw (surf, x, y, COL_DIM, "---- ");
+        }
+        y += ROW_H;
+        x = table_x;
+        x = txt_draw (surf, x, y, COL_LABEL, "Status: ");
+        x = txt_drawf(surf, x, y, COL_VALUE, "%02X  ", k->status);
+        x = txt_draw (surf, x, y, COL_LABEL, "Caps:");
+        x = txt_draw (surf, x, y, k->caps_lock ? COL_HELD : COL_DIM,
+                      k->caps_lock ? "ON " : "-- ");
+        x = txt_draw (surf, x, y, COL_LABEL, "Num:");
+        x = txt_draw (surf, x, y, k->num_lock ? COL_HELD : COL_DIM,
+                      k->num_lock ? "ON " : "-- ");
+        if (k->overflow)
+            txt_draw(surf, x, y, COL_ERROR, "(4+ keys)");
+        return y + ROW_H + ROW_H / 2;
     }
 
     /* === Bio Sensor: live BPM + pulse indicator. === The Bio Sensor
@@ -384,6 +421,8 @@ static void tester_update(void)
 
         if (style == JOYPAD_STYLE_MOUSE) mouse_tick(port);
         if (acc   == JOYPAD_ACCESSORY_TYPE_BIO_SENSOR) bio_tick(port);
+        if (joypad_get_identifier(port) == JOYBUS_IDENTIFIER_N64_RANDNET_KEYBOARD)
+            kbd_poll(port, &kbd_state[port]);
 
         if (prev_acc[port] == JOYPAD_ACCESSORY_TYPE_TRANSFER_PAK
             && acc != JOYPAD_ACCESSORY_TYPE_TRANSFER_PAK) {

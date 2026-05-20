@@ -18,6 +18,7 @@ SRC := $(SRCDIR)/main.c             \
        $(SRCDIR)/bio.c              \
        $(SRCDIR)/gba.c              \
        $(SRCDIR)/gba_payload.c      \
+       $(SRCDIR)/kbd.c              \
        $(SRCDIR)/mouse.c            \
        $(SRCDIR)/screensaver.c      \
        $(SRCDIR)/tpak_info.c        \
