@@ -99,7 +99,7 @@ the PC Engine it boots natively.
 
 Tagged as `pce-v<semver>` from the repo root — see
 [`pce/CHANGELOG.md`](CHANGELOG.md) for per-version notes. The release
-workflow attaches `joypad_tester_v<semver>.pce` (the in-tree build
+workflow attaches `joypad_tester_pce_v<semver>.pce` (the in-tree build
 output is `joypad-tester.pce`; the release stages it under a
 flash-cart-friendly name).
 

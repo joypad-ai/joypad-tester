@@ -117,12 +117,12 @@ on the source. Bypasses the signing / ISO mastering steps entirely.
 
 ### Real NUON-enhanced DVD player
 
-Burn `joypad_tester_v<ver>_nuon.iso` to a DVD-R (single-layer, NOT
+Burn `joypad_tester_nuon_v<ver>.iso` to a DVD-R (single-layer, NOT
 DVD-RW / DVD+R / DVD+RW / DVD-RAM — the BIOS is picky and only
 DVD-R is universally accepted). Boot the disc in your player:
 the tester loads automatically as the `/NUON/nuon.run` payload.
 
-The release also ships `joypad_tester_v<ver>_nuon_toshiba.iso` —
+The release also ships `joypad_tester_nuon_toshiba_v<ver>.iso` —
 identical content, but mastered on macOS with `hdiutil -format
 UNIV` because the Toshiba SD2300 BIOS rejects ISO9660+UDF images
 made by every Linux / Windows tool. If you have an SD2300, use
@@ -130,7 +130,7 @@ the `_toshiba` variant. Other players accept either.
 
 ### Bare nuon.run (for multi-app discs)
 
-`joypad_tester_v<ver>_nuon.run` is the signed payload only. Drop
+`joypad_tester_nuon_v<ver>.run` is the signed payload only. Drop
 it into your own DVD layout (e.g. as one entry inside Skah_T's
 [NUON Boot Loader](http://www.dragonshadow.com/-/bootload/)
 applist.txt) to bundle the tester with other homebrew on a single
@@ -142,9 +142,9 @@ Tagged as `nuon-v<semver>` from the repo root — see
 [`nuon/CHANGELOG.md`](CHANGELOG.md) for per-version notes. The
 release workflow attaches three artifacts:
 
-- `joypad_tester_v<ver>_nuon.iso` — UDF ISO from Linux `genisoimage`. Boots on Samsung, RCA, GoldStar, every player except Toshiba SD2300.
-- `joypad_tester_v<ver>_nuon_toshiba.iso` — `hdiutil` Universal format, the only known way to boot on Toshiba SD2300.
-- `joypad_tester_v<ver>_nuon.run` — signed payload for users composing their own multi-app DVD.
+- `joypad_tester_nuon_v<ver>.iso` — UDF ISO from Linux `genisoimage`. Boots on Samsung, RCA, GoldStar, every player except Toshiba SD2300.
+- `joypad_tester_nuon_toshiba_v<ver>.iso` — `hdiutil` Universal format, the only known way to boot on Toshiba SD2300.
+- `joypad_tester_nuon_v<ver>.run` — signed payload for users composing their own multi-app DVD.
 
 ## Origin / credits
 

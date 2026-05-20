@@ -172,7 +172,7 @@ debugging. CI builds on every push to `main` (see
 
 ### Emulator (Flycast / Redream)
 
-Drop `joypad_tester_v<ver>_dc.cdi` onto the emulator. Flycast emulates
+Drop `joypad_tester_dc_v<ver>.cdi` onto the emulator. Flycast emulates
 all maple-bus device classes (controller, mouse, keyboard, light gun,
 VMU, Purupuru) and is the most faithful target for testing peripheral
 detection logic.
@@ -193,7 +193,7 @@ Dreamcast — the disc is a selfboot image with a valid IP.BIN.
 
 Tagged as `dc-v<semver>` from the repo root — see
 [`dc/CHANGELOG.md`](CHANGELOG.md) for per-version notes. The release
-workflow attaches `joypad_tester_v<semver>_dc.cdi` to each GitHub
+workflow attaches `joypad_tester_dc_v<semver>.cdi` to each GitHub
 Release.
 
 ## Origin / credits

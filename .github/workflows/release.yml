@@ -166,17 +166,17 @@ jobs:
         working-directory: ${{ needs.parse.outputs.console }}
         run: |
           # Three release artifacts:
-          #   joypad_tester_v<ver>_gcn.zip -- pre-built Swiss folder
+          #   joypad_tester_gcn_v<ver>.zip -- pre-built Swiss folder
           #     layout for GC SD-card loaders (FlippyDrive, GC Loader,
           #     SD2SP2, etc.). Contains Joypad Tester/{default.dol,
           #     opening.bnr}, ready to drop on an SD root.
-          #   joypad_tester_v<ver>_gcn.iso -- bootable iso9660 + El
+          #   joypad_tester_gcn_v<ver>.iso -- bootable iso9660 + El
           #     Torito disc image (homebrew apploader from
           #     buildtools/apploader/gbi.hdr + the GC .dol renamed to
           #     bootldr.dol + opening.bnr in the file tree). Suitable
           #     for DVD-R burn / IPL-replacement modchips / Dolphin /
           #     ODE flash carts that prefer ISO over folder layout.
-          #   joypad_tester_v<ver>_wii.dol -- bare Wii build for the
+          #   joypad_tester_wii_v<ver>.dol -- bare Wii build for the
           #     Homebrew Channel.
           sudo apt-get update -qq
           sudo apt-get install -y -qq --no-install-recommends genisoimage
@@ -187,7 +187,7 @@ jobs:
             mkdir -p "_stage/Joypad Tester"
             cp joypad-tester-gamecube.dol "_stage/Joypad Tester/default.dol"
             cp opening.bnr                "_stage/Joypad Tester/opening.bnr"
-            (cd _stage && zip -r "../_release/joypad_tester_v${VERSION}_gcn.zip" "Joypad Tester")
+            (cd _stage && zip -r "../_release/joypad_tester_gcn_v${VERSION}.zip" "Joypad Tester")
 
             # Bootable ISO: bushing's open-source apploader (gbi.hdr,
             # vendored in buildtools/apploader/) wraps a bootldr.dol +
@@ -199,12 +199,12 @@ jobs:
             cp opening.bnr                _iso_stage/opening.bnr
             mkisofs -R -J -G buildtools/apploader/gbi.hdr \
                     -no-emul-boot -b bootldr.dol \
-                    -o "_release/joypad_tester_v${VERSION}_gcn.iso" \
+                    -o "_release/joypad_tester_gcn_v${VERSION}.iso" \
                     _iso_stage/
 
             rm -rf _stage _iso_stage
           fi
-          [ -f joypad-tester-wii.dol ] && cp joypad-tester-wii.dol "_release/joypad_tester_v${VERSION}_wii.dol"
+          [ -f joypad-tester-wii.dol ] && cp joypad-tester-wii.dol "_release/joypad_tester_wii_v${VERSION}.dol"
           ls -la _release/
 
       - name: Stage release artifacts (GBA)
@@ -218,20 +218,20 @@ jobs:
           # downloading the release want a playable joypad tester. The
           # eyes build still lives in gba/build/ for source-tree
           # consumers but doesn't get a Release attachment.
-          # Flash-cart-friendly name: joypad_tester_v<ver>.gba.
+          # Flash-cart-friendly name: joypad_tester_gba_v<ver>.gba.
           VERSION="${{ needs.parse.outputs.version }}"
           mkdir -p _release
-          cp build/tester/tester_mb.gba "_release/joypad_tester_v${VERSION}.gba"
+          cp build/tester/tester_mb.gba "_release/joypad_tester_gba_v${VERSION}.gba"
           ls -la _release/
 
       - name: Stage release artifacts (PC Engine)
         if: needs.parse.outputs.console == 'pce'
         working-directory: pce
         run: |
-          # Flash-cart-friendly name: joypad_tester_v<ver>.pce.
+          # Flash-cart-friendly name: joypad_tester_pce_v<ver>.pce.
           VERSION="${{ needs.parse.outputs.version }}"
           mkdir -p _release
-          cp build/joypad-tester.pce "_release/joypad_tester_v${VERSION}.pce"
+          cp build/joypad-tester.pce "_release/joypad_tester_pce_v${VERSION}.pce"
           ls -la _release/
 
       - name: Stage release artifacts (3DO)
@@ -241,7 +241,7 @@ jobs:
           # Single .iso artifact; emulators + flash-friendly burn target.
           VERSION="${{ needs.parse.outputs.version }}"
           mkdir -p _release
-          cp build/joypad-tester.iso "_release/joypad_tester_v${VERSION}_3do.iso"
+          cp build/joypad-tester.iso "_release/joypad_tester_3do_v${VERSION}.iso"
           ls -la _release/
 
       - name: Stage release artifacts (Dreamcast)
@@ -252,7 +252,7 @@ jobs:
           # real DC hardware via GDEMU / MODE / CD-R.
           VERSION="${{ needs.parse.outputs.version }}"
           mkdir -p _release
-          cp build/joypad-tester-dreamcast.cdi "_release/joypad_tester_v${VERSION}_dc.cdi"
+          cp build/joypad-tester-dreamcast.cdi "_release/joypad_tester_dc_v${VERSION}.cdi"
           ls -la _release/
 
       - name: Stage release artifacts (N64)
@@ -264,7 +264,7 @@ jobs:
           # SummerCart64 SD-card loaders.
           VERSION="${{ needs.parse.outputs.version }}"
           mkdir -p _release
-          cp build/joypad-tester.z64 "_release/joypad_tester_v${VERSION}_n64.z64"
+          cp build/joypad-tester.z64 "_release/joypad_tester_n64_v${VERSION}.z64"
           ls -la _release/
 
       - name: Build release body

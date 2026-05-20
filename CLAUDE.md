@@ -284,7 +284,7 @@ Tag-driven. Tag format: `<console>-v<semver>` (e.g. `gcn-v1.0.0`,
 `gba-v1.0.0`, `pce-v1.0.0`). Pre-release suffixes allowed (`-alpha.1`,
 `-rc.2`, …). All three consoles joint-released as v1.0.0 on
 2026-05-11 once the naming convention (short 3-letter codenames),
-artifact-naming pattern (`joypad_tester_v<ver>.<ext>`), and inter-
+artifact-naming pattern (`joypad_tester_<console>_v<ver>.<ext>`), and inter-
 console wiring (gcn embeds gba's tester ROM) settled. Pre-1.0
 internal iterations (gamecube-v0.1.0, gc-v0.2.0, individual v0.1.0
 cuts of the other consoles) were nuked before going public.

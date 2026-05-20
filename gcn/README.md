@@ -127,7 +127,7 @@ python3 buildtools/make_banner.py opening.bnr
 
 ### GameCube — SD-card loaders (Swiss / GC Loader / FlippyDrive / SD2SP2)
 
-Grab `joypad_tester_v<ver>_gcn.zip` from the release and extract it
+Grab `joypad_tester_gcn_v<ver>.zip` from the release and extract it
 to your SD root. The archive contains the Swiss-ready folder layout:
 
 ```
@@ -142,7 +142,7 @@ its file browser; selecting the folder runs `default.dol`.
 
 ### GameCube — bootable disc image / Dolphin / IPL-replacement modchips
 
-Grab `joypad_tester_v<ver>_gcn.iso` for a bootable iso9660 + El
+Grab `joypad_tester_gcn_v<ver>.iso` for a bootable iso9660 + El
 Torito disc image. Works for:
 
 - Dolphin (File → Open the `.iso`, or drag-drop)
@@ -156,7 +156,7 @@ in disc form.
 
 ### Wii (Homebrew Channel)
 
-Grab `joypad_tester_v<ver>_wii.dol` and load it through the Homebrew
+Grab `joypad_tester_wii_v<ver>.dol` and load it through the Homebrew
 Channel (either drop into `apps/JoypadTester/boot.dol` on your SD or
 send via WiiLoad).
 
@@ -166,10 +166,10 @@ Tagged as `gcn-v<semver>` from the repo root — see
 [`gcn/CHANGELOG.md`](CHANGELOG.md) for per-version notes. The release
 workflow attaches:
 
-- `joypad_tester_v<semver>_gcn.zip` — pre-built Swiss folder layout.
-- `joypad_tester_v<semver>_gcn.iso` — bootable disc image (homebrew
+- `joypad_tester_gcn_v<semver>.zip` — pre-built Swiss folder layout.
+- `joypad_tester_gcn_v<semver>.iso` — bootable disc image (homebrew
   apploader + `.dol` + banner, composed with `mkisofs`).
-- `joypad_tester_v<semver>_wii.dol` — bare Wii build.
+- `joypad_tester_wii_v<semver>.dol` — bare Wii build.
 
 ## Origin / credits
 
