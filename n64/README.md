@@ -27,10 +27,11 @@ GBA link cable — and you get a live readout per port:
   the heart-rate sensor from *Tetris 64* still works.
 - **VRU**: detected so you know it's wired up (microphone capture
   is on the roadmap).
-- **RandNet keyboard** (RND-001): detected and polled — shows the
-  raw key scancodes + status flags live as you type. (The Japan-only
-  RANDnet keyboard; the scancode→letter mapping is a roadmap item,
-  the raw matrix codes display now.)
+- **RandNet keyboard** (RND-001): the Japan-only RANDnet keyboard.
+  Shows the named keys you're holding plus a live typed-text line,
+  and lights the Power / Caps / Num Lock LEDs. Full key-matrix decode
+  from the n64brew wiki table (untested on the rare real hardware, but
+  protocol + scancodes are correct-by-source).
 - **Snap Station**: a protocol exerciser for anyone trying to clone
   the Pokémon Snap kiosk hardware.
 - **GBA over the link cable**: the ROM auto-multiboots the same

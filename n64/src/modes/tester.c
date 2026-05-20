@@ -95,6 +95,44 @@ static uint32_t boot_guard_frames = 0;
 
 /* Latest RandNet keyboard poll per port (command 0x13). */
 static kbd_state_t kbd_state[JOYBUS_PORT_COUNT];
+/* Previous frame's held scancodes per port, for press-edge detection. */
+static uint16_t    kbd_prev_keys[JOYBUS_PORT_COUNT][KBD_MAX_KEYS];
+/* Shared typed-text buffer (one keyboard is the norm) + blink tick. */
+static char        kbd_typed[40];
+static int         kbd_typed_len = 0;
+static int         kbd_blink = 0;
+
+static bool kbd_was_held(int port, uint16_t sc)
+{
+    for (int i = 0; i < KBD_MAX_KEYS; i++)
+        if (kbd_prev_keys[port][i] == sc) return true;
+    return false;
+}
+
+/* Fold this frame's newly-pressed keys into the typed buffer. */
+static void kbd_feed_typed(int port, const kbd_state_t *k)
+{
+    bool shift = false;
+    for (int i = 0; i < k->nkeys; i++)
+        if (k->keys[i] == KBD_SCANCODE_SHIFT_L ||
+            k->keys[i] == KBD_SCANCODE_SHIFT_R) shift = true;
+
+    for (int i = 0; i < k->nkeys; i++) {
+        uint16_t sc = k->keys[i];
+        if (kbd_was_held(port, sc)) continue;          /* not a new press */
+        if (sc == KBD_SCANCODE_BACKSPACE) {
+            if (kbd_typed_len > 0) kbd_typed[--kbd_typed_len] = '\0';
+            continue;
+        }
+        char c = kbd_key_char(sc, shift);
+        if (c && kbd_typed_len < (int)sizeof(kbd_typed) - 1) {
+            kbd_typed[kbd_typed_len++] = c;
+            kbd_typed[kbd_typed_len] = '\0';
+        }
+    }
+    for (int i = 0; i < KBD_MAX_KEYS; i++)
+        kbd_prev_keys[port][i] = (i < k->nkeys) ? k->keys[i] : 0;
+}
 
 static bool is_gba_port(int port) { return gba_seen[port] > 0; }
 
@@ -233,32 +271,33 @@ static int draw_port(surface_t *surf, int table_x, int y, joypad_port_t port)
         return y + ROW_H * 2;
     }
 
-    /* === RandNet keyboard: raw scancodes + status. === The JBSC code
-     * is the key's X/Y matrix coordinate (X<<8 | Y); a full
-     * scancode->ASCII map is deferred (table unpublished). */
+    /* === RandNet keyboard: named keys + a live typed-text line. ===
+     * Scancodes decode through the full n64brew key-matrix table. */
     if (id == JOYBUS_IDENTIFIER_N64_RANDNET_KEYBOARD) {
         const kbd_state_t *k = &kbd_state[port];
         x = table_x;
-        x = txt_draw (surf, x, y, COL_LABEL, "Keys: ");
-        x = txt_drawf(surf, x, y, COL_VALUE, "%d  ", k->nkeys);
-        for (int i = 0; i < KBD_MAX_KEYS; i++) {
-            if (i < k->nkeys)
-                x = txt_drawf(surf, x, y, COL_HELD, "%04X ", k->keys[i]);
-            else
-                x = txt_draw (surf, x, y, COL_DIM, "---- ");
+        x = txt_draw(surf, x, y, COL_LABEL, "Keys: ");
+        if (k->nkeys == 0) {
+            x = txt_draw(surf, x, y, COL_DIM, "(none) ");
+        } else {
+            for (int i = 0; i < k->nkeys; i++)
+                x = txt_drawf(surf, x, y, COL_HELD, "%s ", kbd_key_name(k->keys[i]));
         }
-        y += ROW_H;
-        x = table_x;
-        x = txt_draw (surf, x, y, COL_LABEL, "Status: ");
-        x = txt_drawf(surf, x, y, COL_VALUE, "%02X  ", k->status);
-        x = txt_draw (surf, x, y, COL_LABEL, "Caps:");
-        x = txt_draw (surf, x, y, k->caps_lock ? COL_HELD : COL_DIM,
-                      k->caps_lock ? "ON " : "-- ");
-        x = txt_draw (surf, x, y, COL_LABEL, "Num:");
-        x = txt_draw (surf, x, y, k->num_lock ? COL_HELD : COL_DIM,
-                      k->num_lock ? "ON " : "-- ");
+        x = txt_draw(surf, x, y, COL_LABEL, " Caps:");
+        x = txt_draw(surf, x, y, k->caps_lock ? COL_HELD : COL_DIM,
+                     k->caps_lock ? "ON " : "-- ");
+        x = txt_draw(surf, x, y, COL_LABEL, "Num:");
+        x = txt_draw(surf, x, y, k->num_lock ? COL_HELD : COL_DIM,
+                     k->num_lock ? "ON" : "--");
         if (k->overflow)
-            txt_draw(surf, x, y, COL_ERROR, "(4+ keys)");
+            txt_draw(surf, x + COL_W, y, COL_ERROR, "(4+)");
+        y += ROW_H;
+        /* Typed-text line, terminal style with a blinking cursor. */
+        x = table_x;
+        x = txt_draw (surf, x, y, COL_LABEL, "Typed: ");
+        x = txt_drawf(surf, x, y, COL_VALUE, "%s", kbd_typed);
+        if ((kbd_blink / 30) & 1)
+            txt_draw(surf, x, y, COL_VALUE, "_");
         return y + ROW_H + ROW_H / 2;
     }
 
@@ -400,6 +439,7 @@ static int draw_port(surface_t *surf, int table_x, int y, joypad_port_t port)
 
 static void tester_update(void)
 {
+    kbd_blink++;   /* drives the typed-text cursor blink */
     JOYPAD_PORT_FOREACH (port) {
         joypad_style_t          style = joypad_get_style(port);
         joypad_accessory_type_t acc   = joypad_get_accessory_type(port);
@@ -421,8 +461,10 @@ static void tester_update(void)
 
         if (style == JOYPAD_STYLE_MOUSE) mouse_tick(port);
         if (acc   == JOYPAD_ACCESSORY_TYPE_BIO_SENSOR) bio_tick(port);
-        if (joypad_get_identifier(port) == JOYBUS_IDENTIFIER_N64_RANDNET_KEYBOARD)
+        if (joypad_get_identifier(port) == JOYBUS_IDENTIFIER_N64_RANDNET_KEYBOARD) {
             kbd_poll(port, &kbd_state[port]);
+            kbd_feed_typed(port, &kbd_state[port]);
+        }
 
         if (prev_acc[port] == JOYPAD_ACCESSORY_TYPE_TRANSFER_PAK
             && acc != JOYPAD_ACCESSORY_TYPE_TRANSFER_PAK) {

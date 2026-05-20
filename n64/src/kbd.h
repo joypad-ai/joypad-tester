@@ -13,13 +13,12 @@
  *       + one status byte. Up to 3 simultaneous keys; a 4th sets the
  *       status overflow bit. The RandNet cart polled at ~30 Hz.
  *
- * We surface the raw scancodes + status and light the keyboard LEDs.
- * A full JBSC->ASCII mapping is deferred: the X/Y matrix->key table
- * isn't published in machine-readable form anywhere -- even meeq's
- * reference ROM only dumps raw hex and special-cases the two lock
- * keys below. Filling the table needs the (Japan-only) RND-001 in
- * hand to capture each key's code; this build's raw readout is
- * exactly the tool for doing that.
+ * We surface decoded key names + a typed-text line + LED control.
+ * The full X/Y matrix->key table (see kbd.c) is transcribed from the
+ * n64brew wiki "Keyboard" page's Key Matrix Map -- 85 keys, cross-
+ * checked against meeq's KeyboardTest-N64 for the lock-key codes.
+ * Unverified on real RND-001 hardware (Japan-only, no emulator
+ * emulates it), but the protocol + table are correct-by-source.
  */
 #ifndef N64_KBD_H
 #define N64_KBD_H
@@ -34,9 +33,12 @@
 #define KBD_LED_CAPS_LOCK  0x02
 #define KBD_LED_POWER      0x04
 
-/* Known scancodes (the only two anyone has documented). */
+/* Notable scancodes (full table lives in kbd.c). */
 #define KBD_SCANCODE_CAPS_LOCK 0x0F05
 #define KBD_SCANCODE_NUM_LOCK  0x0A05
+#define KBD_SCANCODE_BACKSPACE 0x0D06
+#define KBD_SCANCODE_SHIFT_L   0x0E01
+#define KBD_SCANCODE_SHIFT_R   0x0E06
 
 typedef struct {
     bool     responded;            /* joybus exchange completed */
@@ -55,5 +57,16 @@ typedef struct {
  * keys are held). Caller should gate this on the port reporting
  * JOYBUS_IDENTIFIER_N64_RANDNET_KEYBOARD. */
 void kbd_poll(int port, kbd_state_t *out);
+
+/* Look up the documented key name for a raw JBSC scancode (X<<8 | Y),
+ * e.g. 0x0D07 -> "A", 0x0602 -> "Space". Returns "?" if unknown.
+ * Table transcribed from the n64brew wiki's Keyboard "Key Matrix Map". */
+const char *kbd_key_name(uint16_t jbsc);
+
+/* Printable ASCII for a scancode, or 0 if the key isn't a character
+ * (modifiers, F-keys, arrows, lock keys, Japanese IME keys, etc.).
+ * `shift` upper-cases letters; symbol shift-variants aren't modeled
+ * (the matrix table only documents each key's base function). */
+char kbd_key_char(uint16_t jbsc, bool shift);
 
 #endif
