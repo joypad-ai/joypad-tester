@@ -1,6 +1,6 @@
 # Joypad Tester — Nintendo 64 — Changelog
 
-## v1.0.2 — unreleased
+## v1.0.2 — 2026-05-20
 
 RandNet keyboard text-input polish.
 
