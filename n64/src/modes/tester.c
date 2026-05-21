@@ -354,10 +354,18 @@ static int draw_port(surface_t *surf, int table_x, int y, joypad_port_t port)
      * Scancodes decode through the full n64brew key-matrix table. */
     if (id == JOYBUS_IDENTIFIER_N64_RANDNET_KEYBOARD) {
         const kbd_state_t *k = &kbd_state[port];
-        /* Row 1: held key names (up to 3) -- names only, so even three
-         * of the longest (Muhenkan/Henkan/Zen-Han) fit the line. */
+        /* Row 1: fixed-width Caps/Num lock state FIRST (so it stays
+         * put as the held-key list changes width), then the held key
+         * names. Lock states are 2 chars ("ON"/"--") so the "Keys:"
+         * column never shifts. */
         x = table_x;
-        x = txt_draw(surf, x, y, COL_LABEL, "Keys: ");
+        x = txt_draw(surf, x, y, COL_LABEL, "Caps:");
+        x = txt_draw(surf, x, y, k->caps_lock ? COL_HELD : COL_DIM,
+                     k->caps_lock ? "ON" : "--");
+        x = txt_draw(surf, x, y, COL_LABEL, " Num:");
+        x = txt_draw(surf, x, y, k->num_lock ? COL_HELD : COL_DIM,
+                     k->num_lock ? "ON" : "--");
+        x = txt_draw(surf, x, y, COL_LABEL, "  Keys: ");
         if (k->nkeys == 0) {
             x = txt_draw(surf, x, y, COL_DIM, "(none)");
         } else {
@@ -374,15 +382,6 @@ static int draw_port(surface_t *surf, int table_x, int y, joypad_port_t port)
         x = txt_drawf(surf, x, y, COL_VALUE, "%s", kbd_typed);
         if ((kbd_blink / 30) & 1)
             txt_draw(surf, x, y, COL_VALUE, "_");
-        y += ROW_H;
-        /* Row 3: lock state (own line so the Keys line never overruns). */
-        x = table_x;
-        x = txt_draw(surf, x, y, COL_LABEL, "Caps:");
-        x = txt_draw(surf, x, y, k->caps_lock ? COL_HELD : COL_DIM,
-                     k->caps_lock ? "ON " : "-- ");
-        x = txt_draw(surf, x, y, COL_LABEL, "Num:");
-        x = txt_draw(surf, x, y, k->num_lock ? COL_HELD : COL_DIM,
-                     k->num_lock ? "ON" : "--");
         return y + ROW_H + ROW_H / 2;
     }
 
