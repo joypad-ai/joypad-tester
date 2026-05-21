@@ -5,6 +5,15 @@ The patterns below describe how each console subdir is structured so
 that new consoles can be added without churning the top-level scaffolding
 or the CI/release wiring.
 
+> **Adding a new console?** [`PORTING.md`](PORTING.md) is the
+> authoritative, end-to-end port spec (philosophy, visual system,
+> detection/parsing contract, per-console device checklist, build/CI/
+> release, shared-file wiring). The conventions in this file are the
+> condensed in-repo reference — if the two disagree, PORTING.md wins
+> and this file should be fixed to match. The
+> [`/joypad-port`](.claude/skills/joypad-port/SKILL.md) skill drives
+> the whole process ("build Joypad Tester for &lt;console&gt;").
+
 ## Repository shape
 
 ```

@@ -49,6 +49,11 @@ Subdirs use short 3-letter codenames (`3do`, `gba`, `gcn`, `pce`,
 homebrew-community conventions. Release tags follow the same prefix:
 `<codename>-v<semver>`.
 
+**Adding a console?** [`PORTING.md`](PORTING.md) is the full port spec
+— the shared visual system, feature shape, and device-detection
+philosophy every tester follows so they feel like one set. The whole
+process is also driven by the `/joypad-port` skill.
+
 ## Acknowledgements
 
 Each console app has its own lineage. As more consoles join, this list grows.
