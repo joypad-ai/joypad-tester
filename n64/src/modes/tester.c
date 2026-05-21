@@ -162,6 +162,19 @@ static bool kbd_emit(uint16_t sc, bool upper)
  * is Shift XOR Caps Lock (like a real keyboard). */
 static void kbd_feed_typed(int port, const kbd_state_t *k)
 {
+    /* Overflow = the keyboard flagged an unreliable scan (4+ keys, or
+     * a matrix ghost from three keys forming a rectangle). Real N64
+     * software discards such reports, so we type nothing -- but still
+     * sync the edge state (so held keys don't fire when overflow
+     * clears) and pause repeat. The Keys:/(4+) diagnostic line keeps
+     * showing the raw state. */
+    if (k->overflow) {
+        kbd_repeat_sc = 0;
+        for (int i = 0; i < KBD_MAX_KEYS; i++)
+            kbd_prev_keys[port][i] = (i < k->nkeys) ? k->keys[i] : 0;
+        return;
+    }
+
     bool shift = false;
     for (int i = 0; i < k->nkeys; i++)
         if (k->keys[i] == KBD_SCANCODE_SHIFT_L ||
