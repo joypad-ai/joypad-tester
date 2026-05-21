@@ -105,8 +105,11 @@ static kbd_state_t kbd_state[JOYBUS_PORT_COUNT];
 static int kbd_input_warm[JOYBUS_PORT_COUNT];
 /* Previous frame's held scancodes per port, for press-edge detection. */
 static uint16_t    kbd_prev_keys[JOYBUS_PORT_COUNT][KBD_MAX_KEYS];
-/* Shared typed-text buffer (one keyboard is the norm) + blink tick. */
-static char        kbd_typed[40];
+/* Shared typed-text buffer (one keyboard is the norm) + blink tick.
+ * Sized to the on-screen budget: "Typed: " (7) + buffer + cursor must
+ * fit the ~38-char line from the table's left margin, so cap at 28
+ * visible chars; the line scrolls (oldest drops) past that. */
+static char        kbd_typed[29];
 static int         kbd_typed_len = 0;
 static int         kbd_blink = 0;
 
@@ -351,29 +354,35 @@ static int draw_port(surface_t *surf, int table_x, int y, joypad_port_t port)
      * Scancodes decode through the full n64brew key-matrix table. */
     if (id == JOYBUS_IDENTIFIER_N64_RANDNET_KEYBOARD) {
         const kbd_state_t *k = &kbd_state[port];
+        /* Row 1: held key names (up to 3) -- names only, so even three
+         * of the longest (Muhenkan/Henkan/Zen-Han) fit the line. */
         x = table_x;
         x = txt_draw(surf, x, y, COL_LABEL, "Keys: ");
         if (k->nkeys == 0) {
-            x = txt_draw(surf, x, y, COL_DIM, "(none) ");
+            x = txt_draw(surf, x, y, COL_DIM, "(none)");
         } else {
             for (int i = 0; i < k->nkeys; i++)
                 x = txt_drawf(surf, x, y, COL_HELD, "%s ", kbd_key_name(k->keys[i]));
         }
-        x = txt_draw(surf, x, y, COL_LABEL, " Caps:");
-        x = txt_draw(surf, x, y, k->caps_lock ? COL_HELD : COL_DIM,
-                     k->caps_lock ? "ON " : "-- ");
-        x = txt_draw(surf, x, y, COL_LABEL, "Num:");
-        x = txt_draw(surf, x, y, k->num_lock ? COL_HELD : COL_DIM,
-                     k->num_lock ? "ON" : "--");
         if (k->overflow)
-            txt_draw(surf, x + COL_W, y, COL_ERROR, "(4+)");
+            txt_draw(surf, x, y, COL_ERROR, "(4+)");
         y += ROW_H;
-        /* Typed-text line, terminal style with a blinking cursor. */
+        /* Row 2: typed-text line, terminal style with a blinking
+         * cursor (buffer is capped to the visible width; it scrolls). */
         x = table_x;
         x = txt_draw (surf, x, y, COL_LABEL, "Typed: ");
         x = txt_drawf(surf, x, y, COL_VALUE, "%s", kbd_typed);
         if ((kbd_blink / 30) & 1)
             txt_draw(surf, x, y, COL_VALUE, "_");
+        y += ROW_H;
+        /* Row 3: lock state (own line so the Keys line never overruns). */
+        x = table_x;
+        x = txt_draw(surf, x, y, COL_LABEL, "Caps:");
+        x = txt_draw(surf, x, y, k->caps_lock ? COL_HELD : COL_DIM,
+                     k->caps_lock ? "ON " : "-- ");
+        x = txt_draw(surf, x, y, COL_LABEL, "Num:");
+        x = txt_draw(surf, x, y, k->num_lock ? COL_HELD : COL_DIM,
+                     k->num_lock ? "ON" : "--");
         return y + ROW_H + ROW_H / 2;
     }
 
