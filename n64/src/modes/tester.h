@@ -20,4 +20,9 @@ bool jt_tester_gba_input_active(void);
  * isn't surfaced as a libdragon controller). */
 bool jt_tester_kbd_input_active(void);
 
+/* Per-frame RandNet keyboard scan. Call once per frame from the main
+ * loop, regardless of mode/screensaver, so typing both prevents AND
+ * wakes the idle screensaver and the typed-text state stays current. */
+void jt_tester_poll_keyboard(void);
+
 #endif

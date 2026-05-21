@@ -126,6 +126,10 @@ int main(void)
 
     while (1) {
         joypad_poll();
+        /* Scan the RandNet keyboard every frame, before the idle check
+         * and regardless of mode/screensaver, so typing both prevents
+         * the screensaver and wakes it. */
+        jt_tester_poll_keyboard();
         screensaver_idle_tick(jt_any_input_this_frame());
         jt_options_menu_update();
         apply_mode_switch();

@@ -6,10 +6,16 @@ RandNet keyboard text-input polish.
 
 ### Highlights
 
-- **Typing no longer trips the idle screensaver.** Keyboard activity
-  now feeds the global idle check (the keyboard isn't a libdragon-
-  classified controller, so the pad/analog checks were blind to it —
-  same warm-counter fix the GBA-link pass-through uses).
+- **Keyboard input drives the idle screensaver** — typing both keeps
+  it away and wakes it. The keyboard is scanned every frame from the
+  main loop (not just inside the tester mode), so it works even while
+  the screensaver is up (the keyboard isn't a libdragon-classified
+  controller, so the pad/analog idle checks were blind to it).
+- **Ghost/overflow scans don't type.** When the keyboard flags an
+  unreliable scan — 4+ keys, or a matrix ghost from three keys
+  forming a rectangle (e.g. F1+F2+F3) — the typed line ignores it,
+  matching how real N64 keyboard software treats the overflow bit.
+  The `Keys:`/`(4+)` diagnostic still shows the raw state.
 - **Typematic key repeat.** Holding a character key or Backspace
   repeats it after a ~0.5s delay (~20/s), like a real keyboard; the
   most-recently-pressed key repeats. Modifiers, locks, F-keys and

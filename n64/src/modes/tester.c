@@ -534,9 +534,28 @@ static int draw_port(surface_t *surf, int table_x, int y, joypad_port_t port)
     return y + ROW_H / 2;  /* small gap before the next port */
 }
 
-static void tester_update(void)
+/* Per-frame RandNet keyboard scan. Runs from the main loop EVERY frame
+ * regardless of the active mode or the screensaver, so typing both
+ * keeps the screensaver away AND wakes it (the keyboard isn't a
+ * libdragon controller, and tester_update -- where this used to live
+ * -- doesn't run while the screensaver is up). One poll per frame, so
+ * the typed-buffer edge detection stays correct. */
+void jt_tester_poll_keyboard(void)
 {
     kbd_blink++;   /* drives the typed-text cursor blink */
+    JOYPAD_PORT_FOREACH (port) {
+        if (joypad_get_identifier(port) == JOYBUS_IDENTIFIER_N64_RANDNET_KEYBOARD) {
+            kbd_poll(port, &kbd_state[port], kbd_caps_lock, kbd_num_lock);
+            kbd_feed_typed(port, &kbd_state[port]);
+            if (kbd_state[port].nkeys > 0)
+                kbd_input_warm[port] = KBD_INPUT_HOLD_FRAMES;
+        }
+        if (kbd_input_warm[port] > 0) kbd_input_warm[port]--;
+    }
+}
+
+static void tester_update(void)
+{
     JOYPAD_PORT_FOREACH (port) {
         joypad_style_t          style = joypad_get_style(port);
         joypad_accessory_type_t acc   = joypad_get_accessory_type(port);
@@ -558,13 +577,6 @@ static void tester_update(void)
 
         if (style == JOYPAD_STYLE_MOUSE) mouse_tick(port);
         if (acc   == JOYPAD_ACCESSORY_TYPE_BIO_SENSOR) bio_tick(port);
-        if (joypad_get_identifier(port) == JOYBUS_IDENTIFIER_N64_RANDNET_KEYBOARD) {
-            kbd_poll(port, &kbd_state[port], kbd_caps_lock, kbd_num_lock);
-            kbd_feed_typed(port, &kbd_state[port]);
-            if (kbd_state[port].nkeys > 0)
-                kbd_input_warm[port] = KBD_INPUT_HOLD_FRAMES;
-        }
-        if (kbd_input_warm[port] > 0) kbd_input_warm[port]--;
 
         if (prev_acc[port] == JOYPAD_ACCESSORY_TYPE_TRANSFER_PAK
             && acc != JOYPAD_ACCESSORY_TYPE_TRANSFER_PAK) {
