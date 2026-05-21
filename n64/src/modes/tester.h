@@ -15,4 +15,9 @@ extern const jt_mode_t jt_mode_tester;
  * joypad subsystem doesn't surface them on its own). */
 bool jt_tester_gba_input_active(void);
 
+/* True while a RandNet keyboard had a key held in the last second.
+ * Lets the screensaver-idle check count typing as input (the keyboard
+ * isn't surfaced as a libdragon controller). */
+bool jt_tester_kbd_input_active(void);
+
 #endif

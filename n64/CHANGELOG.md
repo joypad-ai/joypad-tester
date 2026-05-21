@@ -1,5 +1,29 @@
 # Joypad Tester — Nintendo 64 — Changelog
 
+## v1.0.2 — unreleased
+
+RandNet keyboard text-input polish.
+
+### Highlights
+
+- **Typing no longer trips the idle screensaver.** Keyboard activity
+  now feeds the global idle check (the keyboard isn't a libdragon-
+  classified controller, so the pad/analog checks were blind to it —
+  same warm-counter fix the GBA-link pass-through uses).
+- **Typematic key repeat.** Holding a character key or Backspace
+  repeats it after a ~0.5s delay (~20/s), like a real keyboard; the
+  most-recently-pressed key repeats. Modifiers, locks, F-keys and
+  arrows don't repeat.
+- **Caps Lock / Num Lock are real toggles.** A press flips the lock,
+  the keyboard's physical LED reflects the lock state (not the
+  momentary press), and it persists.
+- **Correct letter case.** Letters render upper/lowercase by
+  Shift XOR Caps Lock, like a real keyboard. (Shifted *symbol*
+  variants aren't remapped — the n64brew key matrix only documents
+  each key's base function.)
+- **Enter clears the typed line; the line scrolls when full**
+  (drops the oldest char) instead of freezing.
+
 ## v1.0.1 — 2026-05-20
 
 Adds RandNet keyboard (RND-001) support to the controller tester.

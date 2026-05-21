@@ -37,6 +37,7 @@
 #define KBD_SCANCODE_CAPS_LOCK 0x0F05
 #define KBD_SCANCODE_NUM_LOCK  0x0A05
 #define KBD_SCANCODE_BACKSPACE 0x0D06
+#define KBD_SCANCODE_RETURN    0x0D04
 #define KBD_SCANCODE_SHIFT_L   0x0E01
 #define KBD_SCANCODE_SHIFT_R   0x0E06
 
@@ -52,11 +53,13 @@ typedef struct {
 } kbd_state_t;
 
 /* Poll the RandNet keyboard on `port` (Joybus command 0x13). Fills
- * *out with the up-to-3 held scancodes + status, and drives the
- * keyboard's Power LED (always) + Caps/Num Lock LEDs (while their
- * keys are held). Caller should gate this on the port reporting
+ * *out with the up-to-3 held scancodes + status. Drives the Power LED
+ * (always) plus the Caps/Num Lock LEDs from the `caps_lock`/`num_lock`
+ * *lock* state the caller maintains (toggled on key press), so the
+ * LEDs behave like a real keyboard's locks rather than press-held
+ * indicators. Caller gates this on the port reporting
  * JOYBUS_IDENTIFIER_N64_RANDNET_KEYBOARD. */
-void kbd_poll(int port, kbd_state_t *out);
+void kbd_poll(int port, kbd_state_t *out, bool caps_lock, bool num_lock);
 
 /* Look up the documented key name for a raw JBSC scancode (X<<8 | Y),
  * e.g. 0x0D07 -> "A", 0x0602 -> "Space". Returns "?" if unknown.

@@ -81,6 +81,7 @@ bool jt_any_input_this_frame(void)
     /* GBA-via-link-cable presses don't surface through libdragon's
      * joypad inputs; the tester module owns that polling, so ask it. */
     if (jt_tester_gba_input_active()) return true;
+    if (jt_tester_kbd_input_active()) return true;
     return false;
 }
 

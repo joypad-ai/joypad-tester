@@ -41,6 +41,8 @@
 #include "../tpak_info.h"
 #include "../ui/text.h"
 
+#include <string.h>   /* memmove for the typed-line scroll */
+
 #include <libdragon.h>
 
 #define ROW_H        TXT_GLYPH_H
@@ -95,12 +97,30 @@ static uint32_t boot_guard_frames = 0;
 
 /* Latest RandNet keyboard poll per port (command 0x13). */
 static kbd_state_t kbd_state[JOYBUS_PORT_COUNT];
+/* Sticky "a keyboard key was held recently" per port, so screensaver-
+ * idle doesn't sneak on while someone is typing (the keyboard isn't a
+ * libdragon-classified controller, so the main idle check can't see it
+ * otherwise). Same warm-counter trick as the GBA pass-through. */
+#define KBD_INPUT_HOLD_FRAMES 60
+static int kbd_input_warm[JOYBUS_PORT_COUNT];
 /* Previous frame's held scancodes per port, for press-edge detection. */
 static uint16_t    kbd_prev_keys[JOYBUS_PORT_COUNT][KBD_MAX_KEYS];
 /* Shared typed-text buffer (one keyboard is the norm) + blink tick. */
 static char        kbd_typed[40];
 static int         kbd_typed_len = 0;
 static int         kbd_blink = 0;
+
+/* Typematic key repeat: hold a character key or Backspace and it
+ * repeats after an initial delay, like a real keyboard. The most-
+ * recently-pressed repeatable key is the one that repeats. */
+#define KBD_REPEAT_DELAY 30   /* ~0.5s held before the first repeat */
+#define KBD_REPEAT_RATE  3    /* then ~20 chars/s while held */
+static uint16_t    kbd_repeat_sc    = 0;
+static int         kbd_repeat_timer = 0;
+/* Caps/Num lock toggle state (flipped on each Caps/Num key press),
+ * drives both letter case and the physical lock LEDs. */
+static bool        kbd_caps_lock = false;
+static bool        kbd_num_lock  = false;
 
 static bool kbd_was_held(int port, uint16_t sc)
 {
@@ -109,27 +129,71 @@ static bool kbd_was_held(int port, uint16_t sc)
     return false;
 }
 
-/* Fold this frame's newly-pressed keys into the typed buffer. */
+/* Apply one keypress to the typed buffer. `upper` selects the
+ * upper-case form of letters. Returns true if the key is a repeatable
+ * text key (printable char or Backspace) -- modifiers, locks, Return,
+ * F-keys, arrows, etc. return false so they don't auto-repeat. */
+static bool kbd_emit(uint16_t sc, bool upper)
+{
+    if (sc == KBD_SCANCODE_BACKSPACE) {
+        if (kbd_typed_len > 0) kbd_typed[--kbd_typed_len] = '\0';
+        return true;
+    }
+    char c = kbd_key_char(sc, upper);
+    if (c) {
+        /* Scroll (drop the oldest char) when full so you can keep
+         * typing instead of the line freezing. */
+        if (kbd_typed_len >= (int)sizeof(kbd_typed) - 1) {
+            memmove(kbd_typed, kbd_typed + 1, kbd_typed_len - 1);
+            kbd_typed_len--;
+        }
+        kbd_typed[kbd_typed_len++] = c;
+        kbd_typed[kbd_typed_len] = '\0';
+        return true;
+    }
+    return false;
+}
+
+/* Fold this frame's keypresses into the typed buffer, with repeat.
+ * Caps/Num Lock toggle on press; Return clears the line; letter case
+ * is Shift XOR Caps Lock (like a real keyboard). */
 static void kbd_feed_typed(int port, const kbd_state_t *k)
 {
     bool shift = false;
     for (int i = 0; i < k->nkeys; i++)
         if (k->keys[i] == KBD_SCANCODE_SHIFT_L ||
             k->keys[i] == KBD_SCANCODE_SHIFT_R) shift = true;
+    bool upper = shift ^ kbd_caps_lock;
 
+    /* New presses: handle locks/Return as one-shots, type the rest and
+     * arm repeat on the newest repeatable key. */
     for (int i = 0; i < k->nkeys; i++) {
         uint16_t sc = k->keys[i];
         if (kbd_was_held(port, sc)) continue;          /* not a new press */
-        if (sc == KBD_SCANCODE_BACKSPACE) {
-            if (kbd_typed_len > 0) kbd_typed[--kbd_typed_len] = '\0';
-            continue;
-        }
-        char c = kbd_key_char(sc, shift);
-        if (c && kbd_typed_len < (int)sizeof(kbd_typed) - 1) {
-            kbd_typed[kbd_typed_len++] = c;
-            kbd_typed[kbd_typed_len] = '\0';
+        if (sc == KBD_SCANCODE_CAPS_LOCK) { kbd_caps_lock = !kbd_caps_lock; continue; }
+        if (sc == KBD_SCANCODE_NUM_LOCK)  { kbd_num_lock  = !kbd_num_lock;  continue; }
+        if (sc == KBD_SCANCODE_RETURN)    { kbd_typed_len = 0; kbd_typed[0] = '\0'; continue; }
+        if (kbd_emit(sc, upper)) {
+            kbd_repeat_sc    = sc;
+            kbd_repeat_timer = KBD_REPEAT_DELAY;
         }
     }
+
+    /* Typematic repeat while the armed key stays held. */
+    bool still_held = false;
+    if (kbd_repeat_sc) {
+        for (int i = 0; i < k->nkeys; i++)
+            if (k->keys[i] == kbd_repeat_sc) { still_held = true; break; }
+    }
+    if (still_held) {
+        if (--kbd_repeat_timer <= 0) {
+            kbd_emit(kbd_repeat_sc, upper);
+            kbd_repeat_timer = KBD_REPEAT_RATE;
+        }
+    } else {
+        kbd_repeat_sc = 0;
+    }
+
     for (int i = 0; i < KBD_MAX_KEYS; i++)
         kbd_prev_keys[port][i] = (i < k->nkeys) ? k->keys[i] : 0;
 }
@@ -146,6 +210,18 @@ bool jt_tester_gba_input_active(void)
      * timer doesn't sneak past on those frames. */
     JOYPAD_PORT_FOREACH (port) {
         if (gba_input_warm[port] > 0) return true;
+    }
+    return false;
+}
+
+bool jt_tester_kbd_input_active(void)
+{
+    /* True while any RandNet keyboard had a key held in the last
+     * second -- lets the global screensaver-idle check count typing
+     * as input (the keyboard isn't a libdragon controller, so the
+     * pad/analog checks miss it entirely). */
+    JOYPAD_PORT_FOREACH (port) {
+        if (kbd_input_warm[port] > 0) return true;
     }
     return false;
 }
@@ -462,9 +538,12 @@ static void tester_update(void)
         if (style == JOYPAD_STYLE_MOUSE) mouse_tick(port);
         if (acc   == JOYPAD_ACCESSORY_TYPE_BIO_SENSOR) bio_tick(port);
         if (joypad_get_identifier(port) == JOYBUS_IDENTIFIER_N64_RANDNET_KEYBOARD) {
-            kbd_poll(port, &kbd_state[port]);
+            kbd_poll(port, &kbd_state[port], kbd_caps_lock, kbd_num_lock);
             kbd_feed_typed(port, &kbd_state[port]);
+            if (kbd_state[port].nkeys > 0)
+                kbd_input_warm[port] = KBD_INPUT_HOLD_FRAMES;
         }
+        if (kbd_input_warm[port] > 0) kbd_input_warm[port]--;
 
         if (prev_acc[port] == JOYPAD_ACCESSORY_TYPE_TRANSFER_PAK
             && acc != JOYPAD_ACCESSORY_TYPE_TRANSFER_PAK) {

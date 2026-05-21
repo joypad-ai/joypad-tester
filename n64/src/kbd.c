@@ -13,20 +13,21 @@
  * the overflow bit. */
 #define KBD_STATUS_OVERFLOW 0x10
 
-/* Persistent LED state per port. Power LED on by default so a plugged-
- * in keyboard visibly lights up the moment it's detected (matches
- * meeq's KeyboardTest-N64). */
-static uint8_t led_status[4] = {
-    KBD_LED_POWER, KBD_LED_POWER, KBD_LED_POWER, KBD_LED_POWER,
-};
-
-void kbd_poll(int port, kbd_state_t *out)
+void kbd_poll(int port, kbd_state_t *out, bool caps_lock, bool num_lock)
 {
     memset(out, 0, sizeof(*out));
     if (port < 0 || port > 3) return;
 
-    /* TX: 0x13 + the running LED-param byte. RX: 7 bytes. */
-    uint8_t cmd[2] = { 0x13, led_status[port] };
+    /* Drive the physical LEDs from the *lock* state the caller tracks
+     * (Power always on; Caps/Num reflect their toggle), not from
+     * whether the key is momentarily held -- a real keyboard lights
+     * the LED for the lock, not the press. */
+    uint8_t leds = KBD_LED_POWER
+                 | (caps_lock ? KBD_LED_CAPS_LOCK : 0)
+                 | (num_lock  ? KBD_LED_NUM_LOCK  : 0);
+
+    /* TX: 0x13 + LED-param byte. RX: 7 bytes. */
+    uint8_t cmd[2] = { 0x13, leds };
     uint8_t r[7]   = { 0 };
     joybus_exec_cmd(port, sizeof(cmd), sizeof(r), cmd, r);
     out->responded = true;
@@ -38,22 +39,9 @@ void kbd_poll(int port, kbd_state_t *out)
     }
     out->status   = r[6];
     out->overflow = (r[6] & KBD_STATUS_OVERFLOW) != 0;
-
-    /* Light Caps/Num Lock LEDs while their keys are held (reference
-     * scancodes from meeq's KeyboardTest-N64). The Power LED stays on. */
-    bool caps = false, num = false;
-    for (int i = 0; i < out->nkeys; i++) {
-        if (out->keys[i] == KBD_SCANCODE_CAPS_LOCK) caps = true;
-        if (out->keys[i] == KBD_SCANCODE_NUM_LOCK)  num  = true;
-    }
-    out->caps_lock = caps;
-    out->num_lock  = num;
-
-    if (caps) led_status[port] |=  KBD_LED_CAPS_LOCK;
-    else      led_status[port] &= ~KBD_LED_CAPS_LOCK;
-    if (num)  led_status[port] |=  KBD_LED_NUM_LOCK;
-    else      led_status[port] &= ~KBD_LED_NUM_LOCK;
-    out->leds = led_status[port];
+    out->caps_lock = caps_lock;   /* reflect the lock state we drove */
+    out->num_lock  = num_lock;
+    out->leds      = leds;
 }
 
 /* Full key matrix, transcribed from the n64brew wiki "Keyboard" page
