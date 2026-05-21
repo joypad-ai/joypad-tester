@@ -271,13 +271,15 @@ build them.
 
 Each console's build still lands in its own `<console>/build/`, but a
 successful `build_docker.sh` also copies the final ROM into a repo-root
-`releases/` folder (gitignored) under a stable versionless name
-(`joypad_tester_<console>.<ext>`), so the latest build of any console
-is in one place regardless of which subdir you're working in. The
-top-level `collect.sh` does the copy — run `./collect.sh` to gather
-everything currently built, or `./collect.sh <console> …` for a
-subset. (The release workflow attaches the *versioned* names; this is
-a dev convenience only.)
+`releases/` folder (gitignored), named with the commit it was built
+from (joypad-os style): `joypad_tester_<console>_<shorthash>.<ext>`,
+plus a `-dirty` suffix when that console's tree has uncommitted
+changes. So every test build is identifiable by commit and they all
+land in one place regardless of which subdir you're working in;
+`ls -t releases/` shows the newest. The top-level `collect.sh` does
+the copy — run `./collect.sh` to gather everything currently built, or
+`./collect.sh <console> …` for a subset. (The release workflow
+attaches the *versioned* names; this is a dev convenience only.)
 
 ## CI: build verification (`.github/workflows/verify-build.yml`)
 

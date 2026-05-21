@@ -294,10 +294,12 @@ modes are worth building.
   `--platform=linux/amd64` where the upstream image is amd64-only.
 - **`make` writes the artifact into `<console>/build/`.**
 - **`build_docker.sh` calls `../collect.sh <console>`** on a successful
-  build so the ROM auto-drops into the repo-root gitignored
-  `releases/` folder under a stable versionless name
-  (`joypad_tester_<console>.<ext>`) — latest build of any console in
-  one place. (`collect.sh` also runnable standalone.)
+  build so the ROM auto-drops into the repo-root gitignored `releases/`
+  folder, named with the commit it came from (joypad-os style):
+  `joypad_tester_<console>_<shorthash>.<ext>` (+ `-dirty` when the
+  tree has uncommitted changes) — every test build identifiable by
+  commit, all in one place (`ls -t releases/` for newest).
+  (`collect.sh` also runnable standalone.)
 - **`make flash`** (EverDrive/USB-loader-class carts): a host-side
   target that flashes the built ROM over USB via `buildtools/flash.sh`.
   Guard the cross-compile half of the Makefile behind the toolchain
