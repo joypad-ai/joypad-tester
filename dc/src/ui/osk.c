@@ -293,21 +293,8 @@ void jt_osk_draw(void)
 {
     if (!visible) return;
 
-    /* Only redraw on actual state change. The OSK paint is ~50 bfont
-     * calls; doing that every frame races the beam and causes the
-     * panel to flicker. Most frames the OSK is stable -> noop. */
-    if (!needs_redraw &&
-        layer == last_drawn_layer &&
-        hover_row == last_drawn_hover_row &&
-        hover_col == last_drawn_hover_col &&
-        text_len == last_drawn_text_len) {
-        return;
-    }
-    needs_redraw = false;
-    last_drawn_layer = layer;
-    last_drawn_hover_row = hover_row;
-    last_drawn_hover_col = hover_col;
-    last_drawn_text_len = text_len;
+    /* Full redraw every frame -- double buffering means no beam race,
+     * so the old dirty-flag gating is unnecessary. */
 
     /* Backdrop panel: 580 x 280, centered. */
     fill_rect(30, 90, 580, 350, JT_COL_BLACK);

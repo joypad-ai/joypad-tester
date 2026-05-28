@@ -56,3 +56,30 @@ void jt_text_centered(int y, uint16_t fg, uint16_t bg, const char *fmt, ...)
     if (x < 0) x = 0;
     draw_at(x, y, fg, bg, buf);
 }
+
+void jt_show_busy(const char *msg)
+{
+    /* Centered box drawn straight onto the back buffer + flipped now, so
+     * it's on screen while the caller blocks the frame loop on a maple
+     * read/write. We can't animate during the stall, but a steady
+     * "working" panel tells the user it isn't frozen. */
+    const int w = 300, h = 64, x = (640 - w) / 2, y = (480 - h) / 2;
+    for (int j = 0; j < h; j++)
+        for (int i = 0; i < w; i++)
+            vram_s[(y + j) * 640 + (x + i)] = JT_COL_BLACK;
+    for (int i = 0; i < w; i++) {
+        vram_s[y * 640 + x + i]             = JT_COL_YELLOW;
+        vram_s[(y + 1) * 640 + x + i]       = JT_COL_YELLOW;
+        vram_s[(y + h - 2) * 640 + x + i]   = JT_COL_YELLOW;
+        vram_s[(y + h - 1) * 640 + x + i]   = JT_COL_YELLOW;
+    }
+    for (int j = 0; j < h; j++) {
+        vram_s[(y + j) * 640 + x]           = JT_COL_YELLOW;
+        vram_s[(y + j) * 640 + x + 1]       = JT_COL_YELLOW;
+        vram_s[(y + j) * 640 + x + w - 2]   = JT_COL_YELLOW;
+        vram_s[(y + j) * 640 + x + w - 1]   = JT_COL_YELLOW;
+    }
+    jt_text_centered(y + 20, JT_COL_WHITE, JT_COL_BLACK, msg);
+    vid_flip(-1);
+    vid_waitvbl();
+}

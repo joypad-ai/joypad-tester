@@ -19,7 +19,9 @@
 #include <kos.h>
 #include <dc/video.h>
 #include <dc/maple.h>
+#include <dc/maple/controller.h>
 #include <dc/biosfont.h>
+#include <arch/arch.h>
 #include <arch/timer.h>
 #include <string.h>
 
@@ -58,10 +60,10 @@ void jt_request_mode(jt_mode_id_t next)
 
 static void clear_framebuffer(void)
 {
-    /* Solid black background. Called once at boot + once per mode
-     * switch. Not every frame — opaque-mode bfont repaints its own
-     * background per glyph, and a per-frame memset on a single-
-     * buffered framebuffer causes flicker (the clear races the beam). */
+    /* Clear the current (hidden) back buffer to black. Called every
+     * frame before the full redraw -- with double buffering the back
+     * buffer holds a stale frame, so it must be wiped. No beam race:
+     * the buffer being cleared is not the one on screen. */
     memset(vram_s, 0, 640 * 480 * sizeof(uint16_t));
 }
 
@@ -72,12 +74,24 @@ static void apply_mode_switch(void)
         mode_table[jt_current_mode]->leave();
     }
     jt_current_mode = pending_mode;
-    /* Wipe the framebuffer once on the transition so the new mode
-     * doesn't inherit stale text from the old one's layout. */
-    clear_framebuffer();
     if (mode_table[jt_current_mode]->enter) {
         mode_table[jt_current_mode]->enter();
     }
+}
+
+/* Dreamcast soft-reset combo: Start + A + B + X + Y on any controller.
+ * Returns true while the full combo is held on at least one pad. The
+ * caller debounces with a hold timer so a momentary all-buttons press
+ * (expected on a controller tester) doesn't reset out from under you. */
+static bool reset_combo_held(void)
+{
+    const uint32_t combo = CONT_START | CONT_A | CONT_B | CONT_X | CONT_Y;
+    for (int p = 0; p < JT_NUM_PORTS; p++) {
+        if (jt_ports[p].present && jt_ports[p].style == JT_STYLE_PAD &&
+            (jt_ports[p].pad.buttons & combo) == combo)
+            return true;
+    }
+    return false;
 }
 
 int main(int argc, char **argv)
@@ -92,10 +106,8 @@ int main(int argc, char **argv)
     jt_options_menu_init();
     jt_screensaver_init();
 
-    /* One-time clear so the boot framebuffer doesn't show garbage.
-     * Subsequent frames don't memset — opaque-mode bfont repaints
-     * its own glyph backgrounds, and a per-frame full-buffer clear
-     * causes single-buffer flicker. */
+    /* Clear the boot buffer so the first visible frame isn't garbage.
+     * The render loop clears every frame from here on. */
     clear_framebuffer();
 
     /* Enter the default mode. */
@@ -106,7 +118,7 @@ int main(int argc, char **argv)
     /* arch_timer_gettime() returns struct timespec since KOS boot.
      * We convert to a float seconds delta for the per-frame update. */
     struct timespec last_ts = arch_timer_gettime();
-    bool last_menu_visible = false;
+    int reset_hold = 0;   /* frames the Start+ABXY combo has been held */
 
     for (;;) {
         struct timespec now_ts = arch_timer_gettime();
@@ -116,15 +128,23 @@ int main(int argc, char **argv)
         last_ts = now_ts;
 
         jt_ports_poll();
+
+        /* Standard DC soft reset: hold Start+A+B+X+Y ~1s -> BIOS menu. */
+        if (reset_combo_held()) {
+            if (++reset_hold >= 60) arch_menu();
+        } else {
+            reset_hold = 0;
+        }
         jt_cursor_update(dt);
         jt_screensaver_tick(dt);
         jt_options_menu_update(dt);
 
         /* Skip mode-update when the menu is visible OR when it just
-         * closed this frame. Otherwise the confirming Start press
-         * would leak through into the newly-active mode's input
-         * handler on the same frame it landed there. */
+         * closed this frame, or while the post-close input lock holds.
+         * Otherwise the confirming A/Start press would leak through into
+         * the newly-active mode's input handler. */
         if (!jt_options_menu_visible() && !jt_options_menu_just_closed()
+            && !jt_options_menu_input_locked()
             && !jt_screensaver_active()) {
             mode_table[jt_current_mode]->update(dt);
         }
@@ -133,57 +153,28 @@ int main(int argc, char **argv)
          * outgoing mode's update completes cleanly. */
         apply_mode_switch();
 
-        /* Wait for vblank BEFORE drawing. With a single-buffered
-         * framebuffer (the default for vid_set_mode), writes are
-         * visible immediately — drawing during active scan tears.
-         * Drawing right after vblank means the beam is in retrace
-         * (or hasn't reached our pixels yet) and bfont's small per-
-         * glyph writes land before the scan catches up. */
-        vid_waitvbl();
+        /* Double-buffered render: every frame draws a FULL screen to the
+         * hidden back buffer, then vid_flip() swaps it in at vblank.
+         * vram_s already points at the back buffer (vid_flip repointed
+         * it last frame). Clear it first since it holds a stale frame. */
+        clear_framebuffer();
 
-        /* Menu open/close transition handling. Clearing the WHOLE
-         * framebuffer on transition causes a black-flash flicker
-         * because single-buffer mode means the beam can see the
-         * cleared state before the next draw lands. Instead:
-         *   - On OPEN: don't clear at all. The menu paints opaquely
-         *     over its 380x220 box; areas outside stay as the prior
-         *     mode's UI (intentional "dimmed copy" effect).
-         *   - On CLOSE: clear only the menu's box region so the
-         *     newly-visible mode's redraw doesn't show leftover
-         *     menu pixels at edges the mode doesn't repaint. */
-        /* Screensaver wake: leftover logo pixels need wiping and the
-         * resuming mode's cached-static-UI flag needs invalidating so
-         * it repaints itself fresh. */
-        if (jt_screensaver_consume_wake()) {
-            clear_framebuffer();
-            /* The editor gates its static UI redraw on an internal
-             * dirty flag; force it via its public hook below. */
-            extern void jt_editor_invalidate(void);
-            jt_editor_invalidate();
-        }
-
-        bool menu_now = jt_options_menu_visible();
-        if (last_menu_visible && !menu_now) {
-            /* Menu just closed -- wipe its box so the mode below has
-             * a clean slate to repaint into. */
-            const int mx = 130, my = 130, mw = 380, mh = 220;
-            for (int j = 0; j < mh; j++) {
-                uint16_t *row = vram_s + (my + j) * 640 + mx;
-                for (int i = 0; i < mw; i++) row[i] = 0;
-            }
-        }
-        last_menu_visible = menu_now;
-
-        /* Only one layer redraws per frame. Drawing both the mode and
-         * the menu means they race on overlapping pixels in single-
-         * buffer mode (menu box overlaps Port B/C rows -> flicker). */
         if (jt_screensaver_active()) {
             jt_screensaver_draw();
-        } else if (menu_now) {
-            jt_options_menu_draw();
         } else {
             mode_table[jt_current_mode]->draw();
+            /* The options menu is a real overlay now -- draw it on top
+             * of the underlying mode in the same frame. */
+            if (jt_options_menu_visible()) {
+                jt_options_menu_draw();
+            }
         }
+
+        /* Display this buffer at the next vblank and repoint vram_s at
+         * the next hidden buffer. vid_waitvbl paces to the refresh and
+         * ensures the flip latched before we draw the next frame. */
+        vid_flip(-1);
+        vid_waitvbl();
     }
 
     return 0;

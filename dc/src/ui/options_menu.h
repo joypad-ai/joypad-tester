@@ -17,4 +17,10 @@ bool jt_options_menu_visible(void);
  * mode's input handler. */
 bool jt_options_menu_just_closed(void);
 
+/* True from the frame the menu closes until the confirm/cancel buttons
+ * (A / B / Start) are released. main.c suppresses mode input while this
+ * holds so the A press that selected a menu item doesn't carry over and
+ * register as a click in the newly-active mode. */
+bool jt_options_menu_input_locked(void);
+
 #endif

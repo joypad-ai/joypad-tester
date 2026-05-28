@@ -17,10 +17,12 @@
 #include <dc/maple.h>
 #include <dc/maple/vmu.h>
 #include <dc/vmufs.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "apply.h"
 #include "../library/library.h"
+#include "../library/gen_library_icon.h"   /* baked default ICONDATA blob */
 
 #define ICONDATA_FILENAME "ICONDATA_VMS"
 
@@ -28,6 +30,24 @@ static bool backup_enabled = true;
 
 void jt_apply_set_backup_enabled(bool enabled) { backup_enabled = enabled; }
 bool jt_apply_get_backup_enabled(void) { return backup_enabled; }
+
+/* Pending "change icon" target (port, slot); negative port = none. */
+static int pending_port = -1, pending_slot = -1;
+
+void jt_apply_set_pending_target(int port_idx, int slot_idx)
+{
+    pending_port = port_idx; pending_slot = slot_idx;
+}
+bool jt_apply_has_pending_target(void) { return pending_port >= 0; }
+void jt_apply_clear_pending_target(void) { pending_port = pending_slot = -1; }
+bool jt_apply_take_pending_target(int *port_idx, int *slot_idx)
+{
+    if (pending_port < 0) return false;
+    if (port_idx) *port_idx = pending_port;
+    if (slot_idx) *slot_idx = pending_slot;
+    pending_port = pending_slot = -1;
+    return true;
+}
 
 const char *jt_apply_result_str(jt_apply_result_t r)
 {
@@ -55,17 +75,26 @@ jt_apply_result_t jt_apply_icondata(const jt_icon_t *icon,
     int free_blocks = vmufs_free_blocks(dev);
     if (free_blocks < 2) return JT_APPLY_ERR_NO_SPACE;
 
-    /* Backup-on-replace. Read the existing ICONDATA_VMS (if any) and
-     * stash it into the library before we overwrite. */
-    if (backup_enabled) {
+    /* Read the existing ICONDATA_VMS (if any) once, for two purposes:
+     *   1. Preserve the Real Mode (3D BIOS) flag -- it's a per-VMU
+     *      display setting, so swapping the icon shouldn't silently
+     *      turn it off. We OR it onto the icon being written.
+     *   2. Back it up into the library (when backup is enabled). */
+    jt_icon_t to_write = *icon;
+    {
         void  *existing = NULL;
         int    existing_size = 0;
         if (vmufs_read(dev, ICONDATA_FILENAME, &existing, &existing_size) == 0) {
-            /* File exists -- back it up. The library will append the
-             * bytes as a "previous" entry tagged with a timestamp. */
-            int rc = jt_library_backup_icondata(dev, existing, existing_size);
+            jt_icon_t prev;
+            if (jt_vms_decode_icondata(existing, existing_size, &prev) &&
+                prev.real_mode_flag) {
+                to_write.real_mode_flag = true;
+            }
+            if (backup_enabled) {
+                int rc = jt_library_backup_icondata(dev, existing, existing_size);
+                if (rc != 0) { free(existing); return JT_APPLY_ERR_BACKUP_FAILED; }
+            }
             free(existing);
-            if (rc != 0) return JT_APPLY_ERR_BACKUP_FAILED;
         }
         /* If vmufs_read failed, the file simply doesn't exist -- not
          * an error; proceed to write the new one. */
@@ -73,10 +102,76 @@ jt_apply_result_t jt_apply_icondata(const jt_icon_t *icon,
 
     /* Encode + write. */
     uint8_t buf[JT_VMS_ICONDATA_SIZE];
-    if (!jt_vms_encode_icondata(icon, buf)) return JT_APPLY_ERR_ENCODE;
+    if (!jt_vms_encode_icondata(&to_write, buf)) return JT_APPLY_ERR_ENCODE;
 
     int rc = vmufs_write(dev, ICONDATA_FILENAME, buf, sizeof(buf),
                          VMUFS_OVERWRITE);
     if (rc != 0) return JT_APPLY_ERR_WRITE_FAILED;
     return JT_APPLY_OK;
+}
+
+/* ---- VMU LCD helpers ---- */
+
+/* 32x32 mono icon (MSB-first within byte, row-major) -> 48x32 XBM
+ * (LSB-first within byte) with the icon centered (8px pad each side). */
+static void mono32_to_lcd_xbm(const uint8_t *mono, char out[48 * 32 / 8])
+{
+    memset(out, 0, 48 * 32 / 8);
+    for (int r = 0; r < 32; r++) {
+        for (int c = 0; c < 32; c++) {
+            int p = r * 32 + c;
+            if (!((mono[p / 8] >> (7 - (p % 8))) & 1)) continue;
+            int x = 8 + c, y = r;
+            out[y * 6 + (x / 8)] |= (char)(1 << (x % 8));
+        }
+    }
+}
+
+int jt_vmu_show_mono_bits(int port_idx, int slot_idx, const uint8_t *mono_bits)
+{
+    maple_device_t *dev = maple_enum_dev(port_idx, slot_idx + 1);
+    if (!dev || !dev->valid) return -1;
+    if (!(dev->info.functions & MAPLE_FUNC_LCD)) return -1;
+    char xbm[48 * 32 / 8];
+    mono32_to_lcd_xbm(mono_bits, xbm);
+    return vmu_draw_lcd_xbm(dev, xbm);
+}
+
+int jt_vmu_ensure_icondata(int port_idx, int slot_idx)
+{
+    maple_device_t *dev = maple_enum_dev(port_idx, slot_idx + 1);
+    if (!dev || !dev->valid) return -1;
+    if (!(dev->info.functions & MAPLE_FUNC_MEMCARD)) return -1;
+
+    /* Already present? */
+    void *existing = NULL;
+    int   existing_size = 0;
+    if (vmufs_read(dev, ICONDATA_FILENAME, &existing, &existing_size) == 0) {
+        free(existing);
+        return 0;
+    }
+    if (vmufs_free_blocks(dev) < 2) return -2;
+    return vmufs_write(dev, ICONDATA_FILENAME,
+                       (void *)joypad_logo_icondata_full,
+                       sizeof(joypad_logo_icondata_full),
+                       VMUFS_OVERWRITE);
+}
+
+int jt_vmu_show_stored_icon(int port_idx, int slot_idx)
+{
+    maple_device_t *dev = maple_enum_dev(port_idx, slot_idx + 1);
+    if (!dev || !dev->valid) return -1;
+    if (!(dev->info.functions & MAPLE_FUNC_LCD)) return -1;
+    char xbm[48 * 32 / 8];
+    void *raw = NULL;
+    int   sz = 0;
+    if (vmufs_read(dev, ICONDATA_FILENAME, &raw, &sz) == 0 && raw) {
+        jt_icon_t icon;
+        if (jt_vms_decode_icondata(raw, sz, &icon)) mono32_to_lcd_xbm(icon.mono_bits, xbm);
+        else memset(xbm, 0, sizeof(xbm));
+        free(raw);
+    } else {
+        memset(xbm, 0, sizeof(xbm));
+    }
+    return vmu_draw_lcd_xbm(dev, xbm);
 }

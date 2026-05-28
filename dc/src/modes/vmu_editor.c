@@ -33,6 +33,7 @@
 
 #include "vmu_editor.h"
 #include "browser.h"
+#include "../app.h"
 #include "../ui/bfont_util.h"
 #include "../ui/osk.h"
 #include "../canvas/canvas.h"
@@ -51,13 +52,26 @@ bool jt_browser_consume_pending(jt_icon_t *out);
 
 #define COLOR_X      24
 #define MONO_X       240
-#define CANVAS_Y     40
+/* CANVAS_Y pushed down + inter-section gaps tightened (12->8) so the
+ * whole editor (header .. footer) fits inside the CRT-safe band
+ * (~y=24..452); overscan was clipping the title and footer. */
+#define CANVAS_Y     52
 
-#define COLOR_PAL_Y  (CANVAS_Y + PANE_SIZE + 12)
+#define COLOR_PAL_Y  (CANVAS_Y + PANE_SIZE + 8)
 #define MONO_PAL_Y   COLOR_PAL_Y
-#define BUTTON_Y     (COLOR_PAL_Y + 4 * 22 + 12)
+#define BUTTON_Y     (COLOR_PAL_Y + 4 * 22 + 8)
 
 #define SWATCH_W     22
+
+/* Document-level buttons (Save / Name) live in the right-hand status
+ * column, stacked below the status text, so they read as a separate
+ * group from the per-pane Reset/Invert buttons. Real Mode is now a
+ * VMU-level setting in the file manager -- apply preserves the prior
+ * flag automatically, so the editor doesn't need its own toggle. */
+#define DOCBTN_X     450
+#define DOCBTN_W     176
+#define DOCBTN_SAVE_Y 288
+#define DOCBTN_NAME_Y 320
 
 static jt_canvas_t canvas;
 static bool initialized = false;
@@ -66,60 +80,39 @@ static bool initialized = false;
  * definitions appear in this file. */
 static uint32_t aggregate_pad_buttons(void);
 
-/* Same approach as OSK / options menu: gate the per-frame static UI
- * repaint on a dirty flag. Otherwise repainting ~110K pixels every
- * frame (canvases + palette + mono toggles + buttons + status text)
- * races the beam on single-buffer mode and the swatches/buttons
- * appear to flicker. Set dirty on any state change. */
-static bool static_ui_dirty = true;
-
-/* Externally-callable hook (main.c uses it after screensaver wake) so
- * an overlay clearing the framebuffer can force the next draw to
- * fully repaint the editor's static UI. */
-void jt_editor_invalidate(void)
-{
-    static_ui_dirty = true;
-}
-
-/* Classic save-restore sprite technique for the screen-space cursor.
- * Before drawing the cursor each frame, we save the 9x14 pixels
- * currently underneath. The next frame, we restore those bytes
- * BEFORE any other drawing so the cursor's previous footprint goes
- * back to what was there. Avoids the flicker that a clear-to-black
- * + redraw approach causes on a single-buffered framebuffer (the
- * beam can scan the "cleared but not yet redrawn" state). */
-#define CURSOR_W 9
-#define CURSOR_H 14
-static int last_cursor_x = -100, last_cursor_y = -100;
-static uint16_t cursor_backing[CURSOR_W * CURSOR_H];
-static bool cursor_backing_valid = false;
-
-/* Last frame's canvas-cell highlight position (the yellow ring drawn
- * around the cell under the cursor). Tracked separately from the arrow
- * sprite's save/restore because the ring sits at the canvas cell, not
- * at the cursor's screen coords. */
-static int  last_cell_cx = -1, last_cell_cy = -1;
-static int  last_cell_base_x = 0;       /* COLOR_X or MONO_X */
-static jt_canvas_layer_t last_cell_layer = JT_LAYER_COLOR;
-static bool last_cell_valid = false;
-
 static uint32_t last_btns = 0;
 static bool     last_action_button = false;     /* A held last frame */
 static bool     last_b_button      = false;     /* B held last frame */
 
-/* Apply / Save state. Both verbs use the same VMU picker overlay;
- * picker_purpose distinguishes the action to perform on confirm. */
-typedef enum { PICK_NONE = 0, PICK_APPLY, PICK_SAVE } picker_purpose_t;
-static picker_purpose_t picker_purpose = PICK_NONE;
-static int           picker_idx = 0;
+/* D-pad cursor-nudge auto-repeat: per-direction held-frame counters
+ * (order: Up, Down, Left, Right). DELAY = frames before auto-repeat
+ * begins (~270ms @ 60Hz); RATE = frames between repeats (~66ms). */
+#define DPAD_REPEAT_DELAY 16
+#define DPAD_REPEAT_RATE  4
+static int dpad_hold[4] = {0, 0, 0, 0};
+
+/* Unified save flow. The Save button drives a two-step wizard:
+ *   stage 1 (SAVE_PICK_VMU)    -> choose which connected VMU
+ *   stage 2 (SAVE_PICK_ACTION) -> "Apply as current icon" (ICONDATA_VMS)
+ *                                 vs "Store in icon library" (VMUICONS.VMS)
+ *   stage 3 (name OSK)         -> only on the library-store path
+ * On completion the user is dropped into the File Manager (apply) or the
+ * Icon Library (store) to see the result. */
+typedef enum {
+    SAVE_NONE = 0,
+    SAVE_PICK_VMU,
+    SAVE_PICK_ACTION,
+} save_stage_t;
+static save_stage_t  save_stage   = SAVE_NONE;
+static int           picker_idx   = 0;      /* selection in current stage */
+static int           save_vmu_port = -1, save_vmu_slot = -1;  /* chosen VMU */
 static char          apply_result_text[80] = {0};
 static unsigned      apply_result_frames = 0;
 static int           apply_target_count = 0;
 static struct { int port, slot; } apply_targets[JT_NUM_PORTS * JT_NUM_SLOTS];
 
-/* While Save is in flight after VMU pick, we open the OSK for the
- * entry name. These remember which VMU to write to once the name comes
- * back. */
+/* While the library store is in flight after the name OSK, remember
+ * which VMU to write to once the name comes back. */
 static int  pending_save_port = -1;
 static int  pending_save_slot = -1;
 static bool save_awaiting_name = false;
@@ -236,12 +229,53 @@ static void save_to_library(int port, int slot, const char *entry_name)
         apply_result_frames = 180;
         return;
     }
+    jt_show_busy("Saving to library...");
     int wrc = jt_library_save(dev, &lib);
     snprintf(apply_result_text, sizeof(apply_result_text),
              "%c%d: %s",
              'A' + port, slot + 1,
              (wrc == 0) ? "Saved to library" : "Library write failed");
     apply_result_frames = 180;
+}
+
+/* ---- VMU LCD live mirror ----
+ * While the editor is open, every connected VMU's physical LCD mirrors
+ * the live mono canvas. Throttled to ~10Hz and gated on actual change
+ * so we don't flood the maple bus. On leave we push each VMU's stored
+ * ICONDATA icon back so the displays revert to their "natural" look. */
+static uint8_t lcd_last_pushed_mono[128];
+static bool    lcd_last_pushed_valid = false;
+static int     lcd_push_cooldown = 0;
+
+static void push_live_mono_to_vmus(void)
+{
+    if (lcd_push_cooldown > 0) { lcd_push_cooldown--; return; }
+    if (lcd_last_pushed_valid &&
+        memcmp(lcd_last_pushed_mono, canvas.mono_bits,
+               sizeof(canvas.mono_bits)) == 0) return;
+
+    for (int p = 0; p < JT_NUM_PORTS; p++) {
+        for (int s = 0; s < JT_NUM_SLOTS; s++) {
+            if (jt_ports[p].slots[s].kind != JT_SLOT_VMU) continue;
+            if (!jt_ports[p].slots[s].has_lcd) continue;
+            jt_vmu_show_mono_bits(p, s, canvas.mono_bits);
+        }
+    }
+    memcpy(lcd_last_pushed_mono, canvas.mono_bits, sizeof(canvas.mono_bits));
+    lcd_last_pushed_valid = true;
+    lcd_push_cooldown = 6;   /* ~10Hz cap */
+}
+
+static void restore_stored_icons_to_vmus(void)
+{
+    for (int p = 0; p < JT_NUM_PORTS; p++) {
+        for (int s = 0; s < JT_NUM_SLOTS; s++) {
+            if (jt_ports[p].slots[s].kind != JT_SLOT_VMU) continue;
+            if (!jt_ports[p].slots[s].has_lcd) continue;
+            jt_vmu_show_stored_icon(p, s);
+        }
+    }
+    lcd_last_pushed_valid = false;
 }
 
 static void editor_enter(void)
@@ -262,7 +296,8 @@ static void editor_enter(void)
      * next frame and open the apply picker spuriously. Also clears
      * any stale picker / palette-editor / OSK-awaiting state from a
      * previous visit. */
-    picker_purpose = PICK_NONE;
+    save_stage = SAVE_NONE;
+    picker_idx = 0;
     palette_edit_idx = -1;
     save_awaiting_name = false;
     pending_save_port = -1;
@@ -270,20 +305,18 @@ static void editor_enter(void)
     last_btns = aggregate_pad_buttons();
     last_action_button = (last_btns & CONT_A) || jt_cursor.button_a;
     last_b_button      = (last_btns & CONT_B) || jt_cursor.button_b;
-
-    /* Cursor backing was captured before this mode was entered; the
-     * pixels under it are now unrelated. Invalidate so the first
-     * draw doesn't restore stale content. */
-    cursor_backing_valid = false;
-    last_cursor_x = -100;
-    last_cursor_y = -100;
-    last_cell_valid = false;
-
-    /* Force a fresh static UI paint after entering. */
-    static_ui_dirty = true;
+    dpad_hold[0] = dpad_hold[1] = dpad_hold[2] = dpad_hold[3] = 0;
+    /* Force the live mirror to push on the first frame in the editor. */
+    lcd_last_pushed_valid = false;
+    lcd_push_cooldown = 0;
 }
 
-static void editor_leave(void) { }
+static void editor_leave(void)
+{
+    /* Revert every connected VMU's LCD back to its stored ICONDATA
+     * icon (or blank if none) so other modes see the "natural" state. */
+    restore_stored_icons_to_vmus();
+}
 
 static uint32_t aggregate_pad_buttons(void)
 {
@@ -306,8 +339,6 @@ typedef enum {
     R_BTN_COLOR_RESET,
     R_BTN_MONO_RESET,
     R_BTN_MONO_INVERT,
-    R_BTN_REALMODE,
-    R_BTN_APPLY,
     R_BTN_SAVE,
     R_BTN_NAME,
 } region_t;
@@ -347,33 +378,32 @@ static region_t region_at(int x, int y, int *cx, int *cy, int *arg)
         if (arg) *arg = row * 4 + col;
         return R_MONO_TOGGLE;
     }
-    /* Buttons. */
+    /* Per-pane canvas-op buttons (under the panes). */
     if (y >= BUTTON_Y && y < BUTTON_Y + 24) {
         if (x >= COLOR_X && x < COLOR_X + 60)              return R_BTN_COLOR_RESET;
         if (x >= MONO_X && x < MONO_X + 60)                return R_BTN_MONO_RESET;
         if (x >= MONO_X + 72 && x < MONO_X + 144)          return R_BTN_MONO_INVERT;
     }
-    if (y >= BUTTON_Y + 28 && y < BUTTON_Y + 52) {
-        if (x >= COLOR_X && x < COLOR_X + 152)             return R_BTN_REALMODE;
-        if (x >= COLOR_X + 164 && x < COLOR_X + 224)       return R_BTN_APPLY;
-        if (x >= COLOR_X + 236 && x < COLOR_X + 296)       return R_BTN_SAVE;
-        if (x >= COLOR_X + 308 && x < COLOR_X + 368)       return R_BTN_NAME;
+    /* Document-level buttons (right column, stacked). */
+    if (x >= DOCBTN_X && x < DOCBTN_X + DOCBTN_W) {
+        if (y >= DOCBTN_SAVE_Y && y < DOCBTN_SAVE_Y + 24) return R_BTN_SAVE;
+        if (y >= DOCBTN_NAME_Y && y < DOCBTN_NAME_Y + 24) return R_BTN_NAME;
     }
     return R_NONE;
 }
 
-static void open_picker(picker_purpose_t purpose)
+static void open_save_flow(void)
 {
     rebuild_apply_targets();
     if (apply_target_count == 0) {
-        const char *verb = (purpose == PICK_SAVE) ? "save to library" : "Apply";
         snprintf(apply_result_text, sizeof(apply_result_text),
-                 "No VMU detected -- plug one in to %s.", verb);
+                 "No VMU detected -- plug one in to save.");
         apply_result_frames = 180;
-        picker_purpose = PICK_NONE;
-    } else {
-        picker_purpose = purpose;
+        save_stage = SAVE_NONE;
+        return;
     }
+    save_stage = SAVE_PICK_VMU;
+    picker_idx = 0;
 }
 
 static void editor_update(float dt)
@@ -386,11 +416,13 @@ static void editor_update(float dt)
         char buf[JT_OSK_MAX_LEN + 1];
         if (jt_osk_consume_text(buf, sizeof(buf))) {
             if (save_awaiting_name) {
-                /* Save flow: write entry to library. */
+                /* Library-store path: write the entry, then drop the
+                 * user into the Icon Library so they see it land. */
                 save_to_library(pending_save_port, pending_save_slot, buf);
                 save_awaiting_name = false;
                 pending_save_port = -1;
                 pending_save_slot = -1;
+                jt_request_mode(JT_MODE_LIB_BROWSER);
             } else {
                 /* Plain naming: update description. */
                 strncpy(canvas.description, buf, sizeof(canvas.description) - 1);
@@ -425,35 +457,56 @@ static void editor_update(float dt)
         return;
     }
 
-    if (picker_purpose != PICK_NONE) {
-        if (edges & CONT_DPAD_UP)   if (picker_idx > 0) picker_idx--;
-        if (edges & CONT_DPAD_DOWN) if (picker_idx < apply_target_count - 1) picker_idx++;
-        if ((edges & CONT_A) && apply_target_count > 0) {
-            int port = apply_targets[picker_idx].port;
-            int slot = apply_targets[picker_idx].slot;
-            if (picker_purpose == PICK_APPLY) {
-                jt_icon_t icon;
-                jt_canvas_to_icon(&canvas, &icon);
-                jt_apply_result_t r = jt_apply_icondata(&icon, port, slot);
-                snprintf(apply_result_text, sizeof(apply_result_text),
-                         "%c%d: %s", 'A' + port, slot + 1, jt_apply_result_str(r));
-                apply_result_frames = 180;
-            } else if (picker_purpose == PICK_SAVE) {
-                /* Defer the actual write until the user types a name. */
-                pending_save_port = port;
-                pending_save_slot = slot;
-                save_awaiting_name = true;
-                jt_osk_begin("Library entry name", "", JT_LIBRARY_NAME_LEN);
-            }
-            picker_purpose = PICK_NONE;
-        }
-        if (edges & CONT_B) picker_purpose = PICK_NONE;
-        last_btns = btns;
-        return;
-    }
+    if (save_stage != SAVE_NONE) {
+        int max_idx = (save_stage == SAVE_PICK_VMU)
+                    ? apply_target_count - 1 : 1;
+        if (edges & CONT_DPAD_UP)   { if (picker_idx > 0)       picker_idx--; }
+        if (edges & CONT_DPAD_DOWN) { if (picker_idx < max_idx) picker_idx++; }
 
-    if (edges & CONT_START) {
-        open_picker(PICK_APPLY);
+        if (edges & CONT_A) {
+            if (save_stage == SAVE_PICK_VMU) {
+                /* Lock in the chosen VMU, advance to the action step. */
+                save_vmu_port = apply_targets[picker_idx].port;
+                save_vmu_slot = apply_targets[picker_idx].slot;
+                save_stage = SAVE_PICK_ACTION;
+                picker_idx = 0;
+            } else { /* SAVE_PICK_ACTION */
+                if (picker_idx == 0) {
+                    /* Apply as the VMU's current icon (ICONDATA_VMS),
+                     * then jump to the File Manager to view it. */
+                    jt_icon_t icon;
+                    jt_canvas_to_icon(&canvas, &icon);
+                    jt_show_busy("Applying icon...");
+                    jt_apply_result_t rr =
+                        jt_apply_icondata(&icon, save_vmu_port, save_vmu_slot);
+                    snprintf(apply_result_text, sizeof(apply_result_text),
+                             "%c%d: %s", 'A' + save_vmu_port,
+                             save_vmu_slot + 1, jt_apply_result_str(rr));
+                    apply_result_frames = 180;
+                    save_stage = SAVE_NONE;
+                    jt_request_mode(JT_MODE_BROWSER);
+                } else {
+                    /* Store in the icon library: ask for a name first,
+                     * then the OSK handler writes it + jumps to the
+                     * Icon Library. Seed the OSK with the description. */
+                    pending_save_port = save_vmu_port;
+                    pending_save_slot = save_vmu_slot;
+                    save_awaiting_name = true;
+                    save_stage = SAVE_NONE;
+                    jt_osk_begin("Library entry name",
+                                 canvas.description, JT_LIBRARY_NAME_LEN);
+                }
+            }
+        }
+        if (edges & CONT_B) {
+            /* Step back a stage; cancel entirely from the first step. */
+            if (save_stage == SAVE_PICK_ACTION) {
+                save_stage = SAVE_PICK_VMU;
+                picker_idx = 0;
+            } else {
+                save_stage = SAVE_NONE;
+            }
+        }
         last_btns = btns;
         return;
     }
@@ -463,9 +516,37 @@ static void editor_update(float dt)
         canvas.tool = (jt_tool_t)((canvas.tool + 1) % JT_TOOL_COUNT);
     }
 
-    /* D-pad up/down cycles the primary color index. */
-    if (edges & CONT_DPAD_UP)   { canvas.primary_color = (canvas.primary_color + JT_PALETTE_ENTRIES - 1) & 0x0F; static_ui_dirty = true; }
-    if (edges & CONT_DPAD_DOWN) { canvas.primary_color = (canvas.primary_color + 1) & 0x0F; static_ui_dirty = true; }
+    /* D-pad nudges the drawing cursor one canvas cell (ZOOM px) per
+     * press, with hold-to-repeat so you can glide across the canvas.
+     * Replaces the old hidden hotkeys (color cycle / 3D toggle / Name
+     * OSK) -- those all have on-screen buttons now. */
+    {
+        static const uint32_t dirs[4] = {
+            CONT_DPAD_UP, CONT_DPAD_DOWN, CONT_DPAD_LEFT, CONT_DPAD_RIGHT
+        };
+        static const int dx[4] = { 0, 0, -ZOOM, ZOOM };
+        static const int dy[4] = { -ZOOM, ZOOM, 0, 0 };
+        for (int d = 0; d < 4; d++) {
+            if (btns & dirs[d]) {
+                int h = dpad_hold[d]++;
+                /* Fire on the initial press, then again once the hold
+                 * passes the delay, repeating at the faster rate. */
+                bool fire = (h == 0) ||
+                            (h >= DPAD_REPEAT_DELAY &&
+                             ((h - DPAD_REPEAT_DELAY) % DPAD_REPEAT_RATE) == 0);
+                if (fire) {
+                    jt_cursor.x += dx[d];
+                    jt_cursor.y += dy[d];
+                    if (jt_cursor.x < 0)   jt_cursor.x = 0;
+                    if (jt_cursor.x > 639) jt_cursor.x = 639;
+                    if (jt_cursor.y < 0)   jt_cursor.y = 0;
+                    if (jt_cursor.y > 479) jt_cursor.y = 479;
+                }
+            } else {
+                dpad_hold[d] = 0;
+            }
+        }
+    }
 
     /* Determine cursor region + apply paint / button actions. A = paint
      * with primary color (mono on), B = paint with secondary (mono off).
@@ -520,8 +601,8 @@ static void editor_update(float dt)
          * a static-UI redraw on color change so the old yellow/cyan
          * selection rings get wiped — relying on the canvas-state
          * dirty hash alone is fragile when only metadata bits flip. */
-        if (a_edge) { canvas.primary_color   = (uint8_t)(arg & 0x0F); static_ui_dirty = true; }
-        if (b_edge) { canvas.secondary_color = (uint8_t)(arg & 0x0F); static_ui_dirty = true; }
+        if (a_edge) canvas.primary_color   = (uint8_t)(arg & 0x0F);
+        if (b_edge) canvas.secondary_color = (uint8_t)(arg & 0x0F);
         if (edges & CONT_X) open_palette_editor(arg);
     } else if (r == R_MONO_TOGGLE && a_edge) {
         jt_canvas_mono_toggle_palette(&canvas, arg);
@@ -530,9 +611,7 @@ static void editor_update(float dt)
             case R_BTN_COLOR_RESET:  jt_canvas_color_reset(&canvas); break;
             case R_BTN_MONO_RESET:   jt_canvas_mono_reset(&canvas);  break;
             case R_BTN_MONO_INVERT:  jt_canvas_mono_invert(&canvas); break;
-            case R_BTN_REALMODE:     canvas.real_mode_flag = !canvas.real_mode_flag; break;
-            case R_BTN_APPLY:        open_picker(PICK_APPLY);        break;
-            case R_BTN_SAVE:         open_picker(PICK_SAVE);         break;
+            case R_BTN_SAVE:         open_save_flow();               break;
             case R_BTN_NAME:
                 jt_osk_begin("Description (16 chars max)",
                              canvas.description, 16);
@@ -541,53 +620,13 @@ static void editor_update(float dt)
         }
     }
 
-    /* Pad-only hotkey for BIOS 3D Mode toggle: D-pad LEFT.
-     * D-pad RIGHT opens the description (Name) OSK. */
-    if (edges & CONT_DPAD_LEFT)  canvas.real_mode_flag = !canvas.real_mode_flag;
-    if (edges & CONT_DPAD_RIGHT) jt_osk_begin("Description (16 chars max)",
-                                              canvas.description, 16);
-
     last_btns = btns;
     last_action_button = a_now;
     last_b_button      = b_now;
     if (apply_result_frames > 0) apply_result_frames--;
 
-    /* Mark static UI dirty when anything that affects render changed.
-     * XOR-fold the canvas + palette state plus the modal/tool flags
-     * into a 32-bit signature; compare to last frame's. Cheap (a few
-     * hundred memory reads) and covers paint, palette edit, mode
-     * toggles, modal opens/closes, and result-text appear/disappear. */
-    static uint32_t last_render_sig = 0;
-    uint32_t sig = 0;
-    sig |= (uint32_t)canvas.tool            << 24;
-    sig |= (uint32_t)canvas.primary_color   << 20;
-    sig |= (uint32_t)canvas.secondary_color << 16;
-    sig |= (uint32_t)canvas.layer           << 12;
-    sig |= (uint32_t)canvas.real_mode_flag  << 11;
-    sig |= (uint32_t)picker_purpose         << 9;
-    sig |= (uint32_t)(palette_edit_idx + 1) & 0x1FF;
-    /* ADD-fold rather than XOR-fold over canvas-state arrays: bitwise
-     * NOT (e.g. mono invert) flips every byte, which leaves an XOR-fold
-     * unchanged when the chunk count is even (mono_bits is 32 chunks).
-     * Addition is sensitive to those flips, so invert correctly trips
-     * the dirty flag. */
-    {
-        const uint32_t *p = (const uint32_t *)canvas.color_indices;
-        for (size_t i = 0; i < sizeof(canvas.color_indices) / 4; i++) sig += p[i];
-    }
-    {
-        const uint32_t *p = (const uint32_t *)canvas.mono_bits;
-        for (size_t i = 0; i < sizeof(canvas.mono_bits) / 4; i++) sig += p[i];
-    }
-    {
-        const uint32_t *p = (const uint32_t *)canvas.palette;
-        for (size_t i = 0; i < sizeof(canvas.palette) / 4; i++) sig += p[i];
-    }
-    sig += apply_result_frames > 0 ? 0xABCDEFu : 0;
-    if (sig != last_render_sig) {
-        static_ui_dirty = true;
-        last_render_sig = sig;
-    }
+    /* Mirror the live mono canvas to every connected VMU's LCD. */
+    push_live_mono_to_vmus();
 }
 
 /* Direct framebuffer rect fill (same as v0.2.0 helper). */
@@ -600,6 +639,33 @@ static void fill_rect(int x, int y, int w, int h, uint16_t color)
     }
 }
 
+/* Fill a rect with an ARGB color composited over a transparency
+ * checkerboard, so palette alpha is actually visible. Opaque (a>=255)
+ * is a plain solid fill; lower alpha blends toward a 4px light/dark
+ * checker (a==0 shows the bare checker). */
+static void fill_rect_argb(int x, int y, int w, int h,
+                           uint8_t r, uint8_t g, uint8_t b, uint8_t a)
+{
+    if (a >= 255) {
+        fill_rect(x, y, w, h, JT_RGB565(r, g, b));
+        return;
+    }
+    if (x < 0 || y < 0 || x + w > 640 || y + h > 480) return;
+    int ia = 255 - a;
+    for (int j = 0; j < h; j++) {
+        int py = y + j;
+        uint16_t *row = vram_s + py * 640;
+        for (int i = 0; i < w; i++) {
+            int px = x + i;
+            uint8_t bg = (((px >> 2) ^ (py >> 2)) & 1) ? 0xB0 : 0x70;
+            uint8_t cr = (uint8_t)((r * a + bg * ia) / 255);
+            uint8_t cg = (uint8_t)((g * a + bg * ia) / 255);
+            uint8_t cb = (uint8_t)((b * a + bg * ia) / 255);
+            row[px] = JT_RGB565(cr, cg, cb);
+        }
+    }
+}
+
 static void draw_canvases(void)
 {
     /* Color pane. */
@@ -608,8 +674,8 @@ static void draw_canvases(void)
             uint8_t idx = canvas.color_indices[y * JT_CANVAS_W + x] & 0x0F;
             uint8_t r, g, b, a;
             jt_palette_unpack(canvas.palette[idx], &r, &g, &b, &a);
-            uint16_t rgb565 = (uint16_t)(((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3));
-            fill_rect(COLOR_X + x * ZOOM, CANVAS_Y + y * ZOOM, ZOOM, ZOOM, rgb565);
+            fill_rect_argb(COLOR_X + x * ZOOM, CANVAS_Y + y * ZOOM, ZOOM, ZOOM,
+                           r, g, b, a);
         }
     }
     /* Mono pane. */
@@ -643,12 +709,11 @@ static void draw_color_palette(void)
     for (int i = 0; i < JT_PALETTE_ENTRIES; i++) {
         uint8_t r, g, b, a;
         jt_palette_unpack(canvas.palette[i], &r, &g, &b, &a);
-        uint16_t rgb565 = (uint16_t)(((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3));
         int row = i / 4, col = i % 4;
         int sx = COLOR_X + col * SWATCH_W;
         int sy = COLOR_PAL_Y + row * SWATCH_W;
         fill_rect(sx - 1, sy - 1, SWATCH_W + 2, SWATCH_W + 2, JT_COL_BLACK);
-        fill_rect(sx + 1, sy + 1, SWATCH_W - 2, SWATCH_W - 2, rgb565);
+        fill_rect_argb(sx + 1, sy + 1, SWATCH_W - 2, SWATCH_W - 2, r, g, b, a);
     }
     /* Selection overlays drawn after all swatches so neighbors can't
      * clip them. Secondary first, primary second: if both point at the
@@ -735,15 +800,14 @@ static void draw_button(int x, int y, int w, const char *label, bool on)
 
 static void draw_buttons(void)
 {
-    /* Row 1: Reset / Reset / Invert. */
+    /* Per-pane canvas ops, under each pane. */
     draw_button(COLOR_X, BUTTON_Y, 60, "Reset", false);
     draw_button(MONO_X,  BUTTON_Y, 60, "Reset", false);
     draw_button(MONO_X + 72, BUTTON_Y, 72, "Invert", false);
-    /* Row 2: BIOS 3D Mode / Apply / Save / Name. */
-    draw_button(COLOR_X,           BUTTON_Y + 28, 152, "BIOS 3D Mode", canvas.real_mode_flag);
-    draw_button(COLOR_X + 164,     BUTTON_Y + 28, 60,  "Apply", false);
-    draw_button(COLOR_X + 236,     BUTTON_Y + 28, 60,  "Save",  false);
-    draw_button(COLOR_X + 308,     BUTTON_Y + 28, 60,  "Name",  false);
+
+    /* Document-level ops in the right column, stacked as a group. */
+    draw_button(DOCBTN_X, DOCBTN_SAVE_Y, DOCBTN_W, "Save", false);
+    draw_button(DOCBTN_X, DOCBTN_NAME_Y, DOCBTN_W, "Name", false);
 }
 
 static const char *tool_name(jt_tool_t t)
@@ -764,131 +828,46 @@ static void draw_status(void)
     jt_text(x, y + 48,  JT_COL_CYAN,   JT_COL_BLACK, "Sec:   %02d", canvas.secondary_color);
     jt_text(x, y + 72,  JT_COL_GREY,   JT_COL_BLACK, "Undo:  %d/%d",
             canvas.undo_count, JT_UNDO_DEPTH);
-    jt_text(x, y + 96,  JT_COL_GREY,   JT_COL_BLACK, "3D:    %s",
-            canvas.real_mode_flag ? "ON" : "off");
-    jt_text(x, y + 120, JT_COL_GREY,   JT_COL_BLACK, "Name:");
-    jt_text(x, y + 144, JT_COL_CYAN,   JT_COL_BLACK, "%s",
+    jt_text(x, y + 96,  JT_COL_GREY,   JT_COL_BLACK, "Name:");
+    jt_text(x, y + 120, JT_COL_CYAN,   JT_COL_BLACK, "%s",
             canvas.description[0] ? canvas.description : "(none)");
 
     int cx, cy, arg;
     region_t r = region_at(jt_cursor.x, jt_cursor.y, &cx, &cy, &arg);
     if (r == R_COLOR_CANVAS || r == R_MONO_CANVAS) {
-        jt_text(x, y + 176, JT_COL_GREEN, JT_COL_BLACK, "Px:    %02d,%02d", cx, cy);
+        jt_text(x, y + 152, JT_COL_GREEN, JT_COL_BLACK, "Px:    %02d,%02d", cx, cy);
     } else {
-        jt_text(x, y + 176, JT_COL_GREY,  JT_COL_BLACK, "Px:    --,--");
+        jt_text(x, y + 152, JT_COL_GREY,  JT_COL_BLACK, "Px:    --,--");
     }
 
     int vmu_count = 0;
     for (int p = 0; p < JT_NUM_PORTS; p++)
         for (int s = 0; s < JT_NUM_SLOTS; s++)
             if (jt_ports[p].slots[s].kind == JT_SLOT_VMU) vmu_count++;
-    jt_text(x, y + 200, JT_COL_GREEN, JT_COL_BLACK, "VMUs:  %d", vmu_count);
+    jt_text(x, y + 176, JT_COL_GREEN, JT_COL_BLACK, "VMUs:  %d", vmu_count);
 
 }
 
-/* Compute the color a given screen pixel SHOULD be when the cell
- * highlight is NOT on it -- i.e. either an interior canvas pixel
- * (palette / mono color) or the pane's 2px outer border (yellow for
- * color, white for mono). Used to "erase" the yellow highlight ring
- * around the previous cell when the cursor moves. */
-static uint16_t pane_pixel_color(int sx, int sy, int base_x,
-                                 jt_canvas_layer_t layer)
-{
-    int px = sx - base_x;
-    int py = sy - CANVAS_Y;
-    if (px < 0 || px >= PANE_SIZE || py < 0 || py >= PANE_SIZE) {
-        /* Sits in the 2px pane border zone. */
-        return (layer == JT_LAYER_COLOR) ? JT_COL_YELLOW : JT_COL_WHITE;
-    }
-    int cell_x = px / ZOOM;
-    int cell_y = py / ZOOM;
-    int p = cell_y * JT_CANVAS_W + cell_x;
-    if (layer == JT_LAYER_COLOR) {
-        uint8_t idx = canvas.color_indices[p] & 0x0F;
-        uint8_t r, g, b, a;
-        jt_palette_unpack(canvas.palette[idx], &r, &g, &b, &a);
-        return (uint16_t)(((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3));
-    }
-    bool on = (canvas.mono_bits[p / 8] >> (7 - (p % 8))) & 1;
-    return on ? JT_RGB565(29, 71, 129) : JT_RGB565(138, 248, 219);
-}
-
-/* Repaint the 1-pixel ring around cell (cx, cy) in the given pane with
- * the colors that should be there absent the highlight. Removes the
- * yellow trail when the cursor moves to a different cell or off the
- * canvas entirely. */
-static void clear_cell_highlight(int cx, int cy, int base_x,
-                                 jt_canvas_layer_t layer)
-{
-    int sx = base_x + cx * ZOOM;
-    int sy = CANVAS_Y + cy * ZOOM;
-    for (int dx = -1; dx <= ZOOM; dx++) {
-        int px = sx + dx;
-        if (px < 0 || px >= 640) continue;
-        if (sy - 1     >= 0 && sy - 1     < 480)
-            vram_s[(sy - 1)     * 640 + px] = pane_pixel_color(px, sy - 1,     base_x, layer);
-        if (sy + ZOOM  >= 0 && sy + ZOOM  < 480)
-            vram_s[(sy + ZOOM)  * 640 + px] = pane_pixel_color(px, sy + ZOOM,  base_x, layer);
-    }
-    for (int dy = -1; dy <= ZOOM; dy++) {
-        int py = sy + dy;
-        if (py < 0 || py >= 480) continue;
-        if (sx - 1     >= 0 && sx - 1     < 640)
-            vram_s[py * 640 + (sx - 1)]    = pane_pixel_color(sx - 1,    py, base_x, layer);
-        if (sx + ZOOM  >= 0 && sx + ZOOM  < 640)
-            vram_s[py * 640 + (sx + ZOOM)] = pane_pixel_color(sx + ZOOM, py, base_x, layer);
-    }
-}
-
+/* Draw the cell-highlight ring (when over a canvas) + the arrow
+ * pointer. With double buffering the whole frame is repainted each
+ * tick, so there's nothing to save/restore -- just draw on top. */
 static void draw_cursor_crosshair(void)
 {
     int cx, cy, arg;
     region_t r = region_at(jt_cursor.x, jt_cursor.y, &cx, &cy, &arg);
 
-    /* Erase the previous frame's cell highlight (if any) before
-     * painting the new one. The ring sits OUTSIDE the cell's 6x6
-     * footprint (1-pixel border around it), so the cell's own pixel
-     * is never disturbed -- only the 4 surrounding strips. */
-    bool over_canvas = (r == R_COLOR_CANVAS || r == R_MONO_CANVAS);
-    int  new_base_x = 0;
-    jt_canvas_layer_t new_layer = JT_LAYER_COLOR;
-    if (over_canvas) {
-        new_base_x = (r == R_COLOR_CANVAS) ? COLOR_X : MONO_X;
-        new_layer  = (r == R_COLOR_CANVAS) ? JT_LAYER_COLOR : JT_LAYER_MONO;
-    }
-    if (last_cell_valid) {
-        bool same_cell = over_canvas &&
-                         last_cell_cx == cx &&
-                         last_cell_cy == cy &&
-                         last_cell_base_x == new_base_x &&
-                         last_cell_layer  == new_layer;
-        if (!same_cell) {
-            clear_cell_highlight(last_cell_cx, last_cell_cy,
-                                 last_cell_base_x, last_cell_layer);
-            last_cell_valid = false;
-        }
-    }
-
-    /* Inside a canvas: highlight the cell underneath as a paint
-     * preview frame. */
-    if (over_canvas) {
-        int sx = new_base_x + cx * ZOOM;
+    if (r == R_COLOR_CANVAS || r == R_MONO_CANVAS) {
+        int base_x = (r == R_COLOR_CANVAS) ? COLOR_X : MONO_X;
+        int sx = base_x + cx * ZOOM;
         int sy = CANVAS_Y + cy * ZOOM;
         fill_rect(sx - 1, sy - 1, ZOOM + 2, 1, JT_COL_YELLOW);
         fill_rect(sx - 1, sy + ZOOM, ZOOM + 2, 1, JT_COL_YELLOW);
         fill_rect(sx - 1, sy - 1, 1, ZOOM + 2, JT_COL_YELLOW);
         fill_rect(sx + ZOOM, sy - 1, 1, ZOOM + 2, JT_COL_YELLOW);
-        last_cell_cx = cx;
-        last_cell_cy = cy;
-        last_cell_base_x = new_base_x;
-        last_cell_layer  = new_layer;
-        last_cell_valid  = true;
     }
 
-    /* Always draw a screen-space pointer so the user can see where
-     * the cursor is, regardless of whether it's over an interactive
-     * region. 9x14 classic mac/windows arrow bitmap. Character
-     * legend: '.' = transparent, 'o' = white interior, 'X' = black outline. */
+    /* Screen-space arrow pointer. 9x14 classic mac/windows bitmap.
+     * '.' = transparent, 'o' = white interior, 'X' = black outline. */
     static const char *arrow[14] = {
         "X........",  /* tip */
         "XX.......",
@@ -915,9 +894,6 @@ static void draw_cursor_crosshair(void)
             else if (c == 'o') vram_s[sy * 640 + sx] = JT_COL_WHITE;
         }
     }
-    /* Record for next frame's trail clear. */
-    last_cursor_x = px;
-    last_cursor_y = py;
 }
 
 static void draw_palette_editor(void)
@@ -934,15 +910,13 @@ static void draw_palette_editor(void)
     jt_text(x + 12, y + 8, JT_COL_YELLOW, JT_COL_BLACK,
             "EDIT PALETTE COLOR %02d", palette_edit_idx);
 
-    /* Live preview swatch. Alpha is stored but the framebuffer is
-     * opaque-only, so we just visualize R/G/B. */
-    uint8_t r4 = palette_edit_rgba[0] & 0x0F;
-    uint8_t g4 = palette_edit_rgba[1] & 0x0F;
-    uint8_t b4 = palette_edit_rgba[2] & 0x0F;
-    uint16_t live_rgb565 = (uint16_t)(((r4 * 17 >> 3) << 11) |
-                                       ((g4 * 17 >> 2) << 5) |
-                                       (b4 * 17 >> 3));
-    fill_rect(x + 12, y + 36, 48, 48, live_rgb565);
+    /* Live preview swatch -- 4-bit channels scaled to 8-bit, composited
+     * over the transparency checker so the alpha slider is visible. */
+    uint8_t r8 = (uint8_t)((palette_edit_rgba[0] & 0x0F) * 17);
+    uint8_t g8 = (uint8_t)((palette_edit_rgba[1] & 0x0F) * 17);
+    uint8_t b8 = (uint8_t)((palette_edit_rgba[2] & 0x0F) * 17);
+    uint8_t a8 = (uint8_t)((palette_edit_rgba[3] & 0x0F) * 17);
+    fill_rect_argb(x + 12, y + 36, 48, 48, r8, g8, b8, a8);
     fill_rect(x + 11, y + 35, 50, 1, JT_COL_WHITE);
     fill_rect(x + 11, y + 84, 50, 1, JT_COL_WHITE);
     fill_rect(x + 11, y + 35, 1, 50, JT_COL_WHITE);
@@ -968,148 +942,106 @@ static void draw_palette_editor(void)
     }
 
     /* Modal is 360px wide; bfont = 12px/char -> ~28 chars usable
-     * inside the inner padding. Two short lines instead of one long. */
-    jt_text(x + 12, y + h - 48, JT_COL_GREY, JT_COL_BLACK,
+     * inside the inner padding. Two short lines instead of one long.
+     * Pulled up off the bottom border so opaque bfont doesn't paint
+     * over the 2px frame at the bottom of the box. */
+    jt_text(x + 12, y + h - 56, JT_COL_GREY, JT_COL_BLACK,
             "Up/Dn:channel  L/R:value");
-    jt_text(x + 12, y + h - 24, JT_COL_GREY, JT_COL_BLACK,
+    jt_text(x + 12, y + h - 32, JT_COL_GREY, JT_COL_BLACK,
             "A:save  B:cancel");
 }
 
 static void draw_picker(void)
 {
-    if (picker_purpose == PICK_NONE) return;
-    const int x = 170, y = 130;
-    fill_rect(x, y, 300, 220, JT_COL_BLACK);
-    fill_rect(x, y, 300, 2, JT_COL_YELLOW);
-    fill_rect(x, y + 218, 300, 2, JT_COL_YELLOW);
-    fill_rect(x, y, 2, 220, JT_COL_YELLOW);
-    fill_rect(x + 298, y, 2, 220, JT_COL_YELLOW);
-    const char *title = (picker_purpose == PICK_SAVE) ?
-                        "SAVE TO LIBRARY" : "APPLY ICONDATA_VMS";
-    jt_text(x + 8, y + 8, JT_COL_YELLOW, JT_COL_BLACK, "%s", title);
-    if (apply_target_count == 0) {
-        jt_text(x + 16, y + 40, JT_COL_RED, JT_COL_BLACK, "No VMU detected.");
-    } else {
+    if (save_stage == SAVE_NONE) return;
+
+    /* 400px box centered on the 640px screen (x=120..520) so the
+     * longest line -- the action sub-captions -- fits with margin. */
+    const int x = 120, y = 130, w = 400, h = 220;
+    fill_rect(x, y, w, h, JT_COL_BLACK);
+    fill_rect(x, y, w, 2, JT_COL_YELLOW);
+    fill_rect(x, y + h - 2, w, 2, JT_COL_YELLOW);
+    fill_rect(x, y, 2, h, JT_COL_YELLOW);
+    fill_rect(x + w - 2, y, 2, h, JT_COL_YELLOW);
+
+    if (save_stage == SAVE_PICK_VMU) {
+        jt_text(x + 12, y + 10, JT_COL_YELLOW, JT_COL_BLACK, "SAVE - SELECT VMU");
         for (int i = 0; i < apply_target_count; i++) {
             uint16_t fg = (i == picker_idx) ? JT_COL_YELLOW : JT_COL_WHITE;
             const char *m = (i == picker_idx) ? ">" : " ";
-            jt_text(x + 16, y + 40 + i * 28, fg, JT_COL_BLACK,
+            jt_text(x + 16, y + 48 + i * 28, fg, JT_COL_BLACK,
                     "%s Port %c, Slot %d",
                     m, 'A' + apply_targets[i].port,
                     apply_targets[i].slot + 1);
         }
-    }
-    jt_text(x + 16, y + 188, JT_COL_GREY, JT_COL_BLACK,
-            (picker_purpose == PICK_SAVE) ?
-            "A: next   B: cancel" : "A: write  B: cancel");
-}
-
-/* Restore the 9x14 pixels saved under the cursor last frame, so its
- * previous footprint disappears cleanly. Runs BEFORE any other drawing
- * so the static UI can repaint on top freely without seeing leftover
- * cursor pixels. */
-static void restore_cursor_backing(void)
-{
-    if (!cursor_backing_valid || last_cursor_x < 0) return;
-    for (int dy = 0; dy < CURSOR_H; dy++) {
-        for (int dx = 0; dx < CURSOR_W; dx++) {
-            int sx = last_cursor_x + dx, sy = last_cursor_y + dy;
-            if (sx < 0 || sx >= 640 || sy < 0 || sy >= 480) continue;
-            vram_s[sy * 640 + sx] = cursor_backing[dy * CURSOR_W + dx];
+        jt_text(x + 12, y + 190, JT_COL_GREY, JT_COL_BLACK,
+                "A: next    B: cancel");
+    } else { /* SAVE_PICK_ACTION */
+        jt_text(x + 12, y + 10, JT_COL_YELLOW, JT_COL_BLACK,
+                "SAVE TO VMU %c%d", 'A' + save_vmu_port, save_vmu_slot + 1);
+        const char *opts[2] = {
+            "Apply as current icon",
+            "Store in icon library",
+        };
+        const char *sub[2] = {
+            "set the VMU's BIOS icon",
+            "add to VMUICONS archive",
+        };
+        for (int i = 0; i < 2; i++) {
+            uint16_t fg = (i == picker_idx) ? JT_COL_YELLOW : JT_COL_WHITE;
+            const char *m = (i == picker_idx) ? ">" : " ";
+            jt_text(x + 16, y + 50 + i * 56, fg, JT_COL_BLACK, "%s %s", m, opts[i]);
+            jt_text(x + 32, y + 74 + i * 56, JT_COL_GREY, JT_COL_BLACK, "%s", sub[i]);
         }
+        jt_text(x + 12, y + 190, JT_COL_GREY, JT_COL_BLACK,
+                "A: select    B: back");
     }
-}
-
-/* Save what's currently underneath where the cursor is ABOUT to be
- * drawn. Called right before the cursor sprite goes on screen. */
-static void save_cursor_backing(void)
-{
-    for (int dy = 0; dy < CURSOR_H; dy++) {
-        for (int dx = 0; dx < CURSOR_W; dx++) {
-            int sx = jt_cursor.x + dx, sy = jt_cursor.y + dy;
-            if (sx < 0 || sx >= 640 || sy < 0 || sy >= 480) {
-                cursor_backing[dy * CURSOR_W + dx] = JT_COL_BLACK;
-                continue;
-            }
-            cursor_backing[dy * CURSOR_W + dx] = vram_s[sy * 640 + sx];
-        }
-    }
-    cursor_backing_valid = true;
 }
 
 static bool any_modal_visible(void)
 {
-    return (picker_purpose != PICK_NONE) || (palette_edit_idx >= 0);
+    return (save_stage != SAVE_NONE) || (palette_edit_idx >= 0);
 }
 
 static void editor_draw(void)
 {
-    /* OSK is a full-screen modal — no underlying UI to worry about. */
+    /* Full redraw every frame onto the hidden back buffer (main.c
+     * cleared it + flips after). No dirty flags / save-restore needed
+     * with double buffering -- just paint the whole UI top to bottom. */
+
+    /* OSK is a full-screen modal. */
     if (jt_osk_visible()) {
-        jt_text_centered(8, JT_COL_YELLOW, JT_COL_BLACK, "Naming");
+        jt_text_centered(24, JT_COL_YELLOW, JT_COL_BLACK, "Naming");
         jt_osk_draw();
         return;
     }
 
-    /* Restore previous cursor footprint first so the rest of the
-     * drawing has a clean surface. */
-    restore_cursor_backing();
+    /* Base editor UI. */
+    jt_text_centered(24, JT_COL_YELLOW, JT_COL_BLACK, "VMU Icon Editor");
+    draw_canvases();
+    draw_color_palette();
+    draw_mono_toggles();
+    draw_buttons();
+    draw_status();
 
-    /* When any modal is open we DON'T redraw the static editor UI
-     * underneath. Repainting the canvases / palettes / buttons each
-     * frame would race the modal redraw and the beam would catch the
-     * "static UI on screen, modal not yet on top" state -> flicker.
-     * Instead, the modal pixels persist from the frame it first
-     * opened, and we just repaint the modal in place each frame
-     * (self-overpaint is fine). */
+    if (apply_result_frames > 0) {
+        jt_text_centered(404, JT_COL_GREEN, JT_COL_BLACK,
+                         "%s", apply_result_text);
+    } else {
+        jt_text_centered(404, JT_COL_GREY, JT_COL_BLACK,
+                         "A primary  B secondary  Y tool  D-pad move");
+    }
+    jt_text_centered(428, JT_COL_GREEN, JT_COL_BLACK,
+                     "Start: options menu");
+
+    /* Modal overlays draw on top of the base UI. */
     if (any_modal_visible()) {
         draw_picker();
         draw_palette_editor();
-    } else if (static_ui_dirty) {
-        /* Heavy static UI redraw only on actual state change -- mode
-         * enter, canvas mutations, palette edits, tool/color/layer
-         * changes, modal close. Otherwise the per-frame ~110K-pixel
-         * cost races the beam and the swatches + buttons flicker. */
-        jt_text_centered(8, JT_COL_YELLOW, JT_COL_BLACK, "VMU Icon Editor");
-        draw_canvases();
-        draw_color_palette();
-        draw_mono_toggles();
-        draw_buttons();
-        draw_status();
-
-        if (apply_result_frames > 0) {
-            jt_text_centered(BUTTON_Y + 60, JT_COL_GREEN, JT_COL_BLACK,
-                             "%s", apply_result_text);
-        }
-
-        jt_text_centered(432, JT_COL_GREY, JT_COL_BLACK,
-                         "A primary  B secondary  Y tool");
-        jt_text_centered(456, JT_COL_GREEN, JT_COL_BLACK,
-                         "Start: options menu");
-
-        static_ui_dirty = false;
-    } else if (!any_modal_visible()) {
-        /* Even when the rest of the static UI is stable we always
-         * repaint the color palette: the primary/secondary selection
-         * rings need to follow the current indices, and a dirty-flag
-         * miss (carry collision in the canvas-state hash, or any
-         * code path that updates primary/secondary without flipping
-         * static_ui_dirty) leaves a stale ring on screen. The 16
-         * swatches paint to identical pixels frame-to-frame unless a
-         * selection actually changes, so this is beam-safe. */
-        draw_color_palette();
+    } else {
+        /* Cursor only when no modal is capturing input. */
+        draw_cursor_crosshair();
     }
-    /* Status text (cursor px coords, undo count) updates every frame
-     * the cursor moves -- redraw it in its own bounded region so it
-     * stays current without dragging the whole static UI redraw cost. */
-    if (!any_modal_visible()) {
-        draw_status();
-    }
-
-    /* Cursor draws last. Save what's underneath first so next frame
-     * can restore it cleanly. */
-    save_cursor_backing();
-    draw_cursor_crosshair();
 }
 
 const jt_mode_t jt_mode_vmu_editor = {

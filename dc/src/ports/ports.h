@@ -75,6 +75,10 @@ typedef struct {
     bool             present;
     jt_port_style_t  style;
     uint32_t         func_mask;   /* raw maple function mask, for diagnostics */
+    /* Maple-reported product name (e.g. "Dreamcast Controller",
+     * "Arcade Stick", "Twin Stick"). Used by the tester to distinguish
+     * controller subtypes that all share JT_STYLE_PAD. */
+    char             product_name[32];
     jt_pad_state_t   pad;
     jt_mouse_state_t mouse;
     jt_kbd_state_t   kbd;

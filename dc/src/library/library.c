@@ -14,43 +14,19 @@
 #include <time.h>
 
 #include "library.h"
+#include "gen_library_icon.h"   /* baked Joypad logo (palette + bitmap) */
 
 #define VMS_HEADER_SIZE  640    /* 0x280 -- ends right where payload starts */
 #define PAYLOAD_HEADER_SIZE 32
 
-/* A small, recognizable 32x32 4bpp icon for the library save itself.
- * Pattern: stack of 3 small squares (a "library shelf" metaphor).
- * Pre-built at runtime when we encode the header. */
+/* 32x32 BIOS icon for the library save itself: the polished Joypad
+ * logo extracted from a dcvmuicons.net ICONDATA at build time (see
+ * gen_library_icon.h). Plain memcpy -- the source already matches the
+ * VMS palette + 4bpp bitmap layout the save format expects. */
 static void build_library_icon(uint8_t *out_bitmap, uint8_t *out_palette)
 {
-    /* Palette: black + white + cyan accent + filler. */
-    memset(out_palette, 0, 32);
-    /* index 0 = black */
-    out_palette[0] = 0x00; out_palette[1] = 0x00;
-    /* index 1 = white */
-    out_palette[2] = 0xFF; out_palette[3] = 0xFF;
-    /* index 2 = cyan accent */
-    out_palette[4] = (uint8_t)((0xF << 4) | 0xF); /* g=15, b=15 */
-    out_palette[5] = (uint8_t)((0xF << 4) | 0x4); /* a=15, r=4 */
-
-    /* Bitmap: outer frame (idx 0) + three centered "shelves". 32x32,
-     * 4bpp packed -- 2 px/byte, high nibble = even col. */
-    memset(out_bitmap, 0x11, 512);  /* fill white (idx 1, both nibbles) */
-    /* Border 1px in idx 0 black: rows 0/31 all 0, col 0/31 all 0. */
-    for (int x = 0; x < 32; x += 2) out_bitmap[x / 2] = 0x00;
-    for (int x = 0; x < 32; x += 2) out_bitmap[(31 * 32 + x) / 2] = 0x00;
-    for (int y = 0; y < 32; y++) {
-        out_bitmap[(y * 32) / 2]      &= 0x0F;        /* col 0  -> high nibble black */
-        out_bitmap[(y * 32 + 30) / 2] &= 0xF0;        /* col 31 -> low nibble black */
-    }
-    /* Three "shelves" -- horizontal bars at y=10, 16, 22, x=8..23. */
-    int rows[3] = { 10, 16, 22 };
-    for (int r = 0; r < 3; r++) {
-        int y = rows[r];
-        for (int x = 8; x < 24; x += 2) {
-            out_bitmap[(y * 32 + x) / 2] = (uint8_t)((2 << 4) | 2); /* cyan */
-        }
-    }
+    memcpy(out_palette, joypad_logo_palette, sizeof(joypad_logo_palette));
+    memcpy(out_bitmap,  joypad_logo_bitmap,  sizeof(joypad_logo_bitmap));
 }
 
 void jt_library_init(jt_library_t *lib)

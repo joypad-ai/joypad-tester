@@ -46,7 +46,11 @@ void jt_video_init(void)
         mode = DM_640x480_NTSC_IL;
         progressive = false;
     }
-    vid_set_mode(mode, PM_RGB565);
+    /* DM_MULTIBUFFER allocates several framebuffers across VRAM so the
+     * render loop can draw to a hidden buffer and vid_flip() it at
+     * vblank -- tear/flicker-free double buffering. Everything draws a
+     * full frame each tick; there's no single-buffer beam race. */
+    vid_set_mode(mode | DM_MULTIBUFFER, PM_RGB565);
 }
 
 jt_cable_t  jt_video_cable(void)  { return detected_cable;  }

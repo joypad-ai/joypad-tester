@@ -50,9 +50,40 @@ CFLAGS  += -Wall -Wextra -Wno-unused-parameter -I$(SRCDIR) \
 ELF := $(BUILDDIR)/$(TARGET).elf
 CDI := $(BUILDDIR)/$(TARGET).cdi
 
+# Generated assets. The library save's BIOS icon is baked from an
+# ICONDATA_VMS exported by the dcvmuicons.net web tool -- drop a new
+# folder under assets/library_icon/ and `make` will refresh the header.
+LIBRARY_ICON_SRC := assets/library_icon/ICONDATA.VMS
+LIBRARY_ICON_HDR := $(SRCDIR)/library/gen_library_icon.h
+LIBRARY_ICON_GEN := buildtools/make_library_icon.py
+
+FALLBACK_ICON_SRC := assets/fallback_vmu_icon/ICONDATA.VMS
+FALLBACK_ICON_HDR := $(SRCDIR)/library/gen_fallback_vmu_icon.h
+FALLBACK_ICON_GEN := buildtools/make_fallback_vmu_icon.py
+
+BIOS_ICONS_SRC := assets/bios_icons/BIOSDUMP.VMS
+BIOS_ICONS_HDR := $(SRCDIR)/library/gen_bios_icons.h
+BIOS_ICONS_GEN := buildtools/make_bios_icons.py
+
 .PHONY: all clean
 
 all: $(CDI)
+
+$(LIBRARY_ICON_HDR): $(LIBRARY_ICON_SRC) $(LIBRARY_ICON_GEN)
+	python3 $(LIBRARY_ICON_GEN) $(LIBRARY_ICON_SRC) $@
+
+$(FALLBACK_ICON_HDR): $(FALLBACK_ICON_SRC) $(FALLBACK_ICON_GEN)
+	python3 $(FALLBACK_ICON_GEN) $(FALLBACK_ICON_SRC) $@
+
+$(BIOS_ICONS_HDR): $(BIOS_ICONS_SRC) $(BIOS_ICONS_GEN)
+	python3 $(BIOS_ICONS_GEN) $(BIOS_ICONS_SRC) $@
+
+# library.c #includes the generated header; make the dep explicit so a
+# refreshed ICONDATA propagates without needing `make clean`.
+$(BUILDDIR)/library/library.o: $(LIBRARY_ICON_HDR)
+
+# browser.c #includes the fallback + bundled preset-icon headers.
+$(BUILDDIR)/modes/browser.o: $(FALLBACK_ICON_HDR) $(BIOS_ICONS_HDR)
 
 # kos-cc is the KOS build wrapper; it bakes in KOS_CFLAGS / KOS_CPPFLAGS
 # / include paths / -lkallisti -lm -lc -lgcc on the link step. We do

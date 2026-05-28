@@ -15,6 +15,15 @@
 #include "../ports/ports.h"
 #include "../video/mode.h"
 
+/* Menu box geometry. Single source of truth -- both the draw routine
+ * and main.c's on-close wipe reference these so the cleared region
+ * always matches what was painted (a smaller wipe leaves the menu's
+ * border / title / footer behind as artifacts). */
+#define MENU_BOX_X 130
+#define MENU_BOX_Y 110
+#define MENU_BOX_W 380
+#define MENU_BOX_H 260
+
 static bool     visible = false;
 static int      hover   = 0;
 static bool     last_dpad_down = false;
@@ -27,16 +36,14 @@ static bool     last_combo     = false;
  * skip the mode->update call on that frame, otherwise the confirming
  * Start press leaks into the newly-active mode's input handler. */
 static bool     just_closed    = false;
-/* Tracks whether we've already done the one-time per-pixel dim of the
- * area surrounding the menu box on this open. Doing it once per open
- * is ~11ms; doing it every frame would blow the frame budget. */
-static bool     dim_applied    = false;
-/* Same trick as the OSK: only repaint the menu contents on actual
- * state change (open / hover move). Otherwise the per-frame bfont
- * passes + 83K-pixel box fill cost most of the frame budget and the
- * beam catches the partial draw -> flicker. */
-static bool     menu_dirty           = true;
-static int      last_drawn_hover     = -1;
+/* Held after the menu closes until the confirm/cancel buttons (A / B /
+ * Start) are fully released. main.c suppresses mode input while this is
+ * set so the A press that selected a menu item doesn't keep firing into
+ * the newly-loaded (or re-selected) mode as a click -- e.g. the File
+ * Manager would otherwise open the first file the instant the menu
+ * closes. just_closed only covers the single close frame; the user
+ * holds A across several frames, so a release-gated lock is needed. */
+static bool     post_close_lock = false;
 /* Cooldown frames after the menu opens during which confirm/cancel
  * are ignored. Handles cases where the user's Start press for "open"
  * gets briefly re-detected as a confirm (controller bounce, fast
@@ -62,6 +69,7 @@ void jt_options_menu_init(void)
 
 bool jt_options_menu_visible(void) { return visible; }
 bool jt_options_menu_just_closed(void) { return just_closed; }
+bool jt_options_menu_input_locked(void) { return post_close_lock; }
 
 static bool any_pad_holds(uint32_t mask)
 {
@@ -113,6 +121,16 @@ void jt_options_menu_update(float dt)
                       : CONT_START;
 
     if (!visible) {
+        /* Drain the post-close input lock: hold it until the buttons
+         * that interact with the menu (A confirm / B cancel / Start
+         * opener) are all released, so the press that closed the menu
+         * doesn't bleed into the mode as a fresh edge. */
+        if (post_close_lock &&
+            !any_pad_holds(CONT_A) &&
+            !any_pad_holds(CONT_B) &&
+            !any_pad_holds(CONT_START)) {
+            post_close_lock = false;
+        }
         /* Detect press edge of the open combo. */
         bool combo_now = any_pad_holds(open_mask);
         if (combo_now && !last_combo) {
@@ -123,8 +141,6 @@ void jt_options_menu_update(float dt)
              * Same for the combo so a continued hold doesn't retoggle. */
             last_start = true;
             open_cooldown = OPEN_COOLDOWN_FRAMES;
-            dim_applied = false;   /* fresh dim on next draw */
-            menu_dirty = true;     /* force first-frame paint */
         }
         last_combo = combo_now;
         last_dpad_down = last_dpad_up = last_a = last_b = false;
@@ -140,14 +156,12 @@ void jt_options_menu_update(float dt)
      * the highlighted option (Enter on a keyboard typically maps to
      * Start in Flycast's controller emulation). B cancels and closes
      * without picking. */
-    int prev_hover = hover;
     if (any_pad_pressed(CONT_DPAD_DOWN, &last_dpad_down)) {
         hover = (hover + 1) % JT_MODE_COUNT;
     }
     if (any_pad_pressed(CONT_DPAD_UP, &last_dpad_up)) {
         hover = (hover + JT_MODE_COUNT - 1) % JT_MODE_COUNT;
     }
-    if (hover != prev_hover) menu_dirty = true;
     /* A confirms; B cancels. Start is intentionally NOT a confirm
      * key — it's the opener (alone in non-tester modes, Start+Down
      * in Tester) and conflating opener+confirm caused the menu to
@@ -167,6 +181,7 @@ void jt_options_menu_update(float dt)
         }
     }
     just_closed = (was_visible && !visible);
+    if (just_closed) post_close_lock = true;
 }
 
 /* Direct-VRAM rect fill (same primitive editor/osk use). */
@@ -180,70 +195,27 @@ static void fill_rect(int x, int y, int w, int h, uint16_t color)
     }
 }
 
-/* Halve each color channel of an RGB565 pixel (50% darken). Reads
- * RGB565 in: rrrrrggggggbbbbb. */
-static inline uint16_t dim_pixel(uint16_t p)
-{
-    uint16_t r = (p >> 11) & 0x1F;
-    uint16_t g = (p >> 5)  & 0x3F;
-    uint16_t b = (p)       & 0x1F;
-    return (uint16_t)(((r >> 1) << 11) | ((g >> 1) << 5) | (b >> 1));
-}
-
 void jt_options_menu_draw(void)
 {
-    if (!visible) {
-        dim_applied = false;
-        last_drawn_hover = -1;
-        menu_dirty = true;   /* fresh paint on next open */
-        return;
+    if (!visible) return;
+
+    /* Full redraw every frame onto the double-buffered back buffer. */
+    const int x = MENU_BOX_X, y = MENU_BOX_Y, w = MENU_BOX_W, h = MENU_BOX_H;
+
+    /* Solid opaque backdrop + 2px yellow border. */
+    fill_rect(x, y, w, h, JT_COL_BLACK);
+    fill_rect(x, y, w, 2, JT_COL_YELLOW);
+    fill_rect(x, y + h - 2, w, 2, JT_COL_YELLOW);
+    fill_rect(x, y, 2, h, JT_COL_YELLOW);
+    fill_rect(x + w - 2, y, 2, h, JT_COL_YELLOW);
+
+    jt_text_centered(y + 6, JT_COL_YELLOW, JT_COL_BLACK, "-- OPTIONS --");
+    for (int i = 0; i < JT_MODE_COUNT; i++) {
+        uint16_t fg = (i == hover) ? JT_COL_YELLOW : JT_COL_WHITE;
+        const char *marker = (i == hover) ? ">" : " ";
+        jt_text(x + 16, y + 40 + i * 32, fg, JT_COL_BLACK,
+                "%s %s", marker, mode_names[i]);
     }
-
-    /* Box height covers: title row + 5 mode rows (32px each) + a
-     * 28px breathing gap + footer (24px). The previous 220 made the
-     * last mode (y+168..192) collide with the footer at y+188. */
-    const int x = 130, y = 110, w = 380, h = 260;
-
-    /* Skip the menu's bfont/box redraw on idle frames so we don't
-     * burn ~5ms per frame painting unchanged pixels. The dim pass
-     * below is also gated separately by dim_applied (only on open).
-     * Net result: each frame in steady-state menu state is a noop. */
-    bool need_repaint = menu_dirty || hover != last_drawn_hover;
-
-    /* Per-pixel dim of the area around the menu was 224K writes to
-     * uncached VRAM (~45ms emulated). That hung the SH4 long enough
-     * that Flycast appeared to crash. Skipped — the menu's solid
-     * black box + yellow border is sufficient visual separation. */
-    (void)dim_pixel;
-    (void)dim_applied;
-
-    if (need_repaint) {
-        /* Solid opaque dark backdrop inside the menu box. */
-        fill_rect(x, y, w, h, JT_COL_BLACK);
-        /* 2px yellow border. */
-        fill_rect(x, y, w, 2, JT_COL_YELLOW);
-        fill_rect(x, y + h - 2, w, 2, JT_COL_YELLOW);
-        fill_rect(x, y, 2, h, JT_COL_YELLOW);
-        fill_rect(x + w - 2, y, 2, h, JT_COL_YELLOW);
-
-        /* Title bar inside the box. */
-        jt_text_centered(y + 6, JT_COL_YELLOW, JT_COL_BLACK, "-- OPTIONS --");
-        for (int i = 0; i < JT_MODE_COUNT; i++) {
-            uint16_t fg = (i == hover) ? JT_COL_YELLOW : JT_COL_WHITE;
-            const char *marker = (i == hover) ? ">" : " ";
-            jt_text(x + 16, y + 40 + i * 32, fg, JT_COL_BLACK,
-                    "%s %s", marker, mode_names[i]);
-        }
-        /* Video info lives on the About page; no reason to repeat it
-         * inside the options menu. */
-        /* Footer hint. The menu box is 380px wide -> 31 chars max
-         * before wrapping into adjacent framebuffer rows (which looks
-         * like flicker). Dropping the "D-pad: nav" hint keeps it
-         * comfortably inside the box. */
-        jt_text(x + 16, y + h - 28, JT_COL_GREY, JT_COL_BLACK,
-                "A: confirm    B: cancel");
-
-        last_drawn_hover = hover;
-        menu_dirty = false;
-    }
+    jt_text(x + 16, y + h - 28, JT_COL_GREY, JT_COL_BLACK,
+            "A: confirm    B: cancel");
 }

@@ -26,4 +26,10 @@ void jt_text(int x, int y, uint16_t fg, uint16_t bg, const char *fmt, ...);
 /* Same but centered horizontally on the screen at row y. */
 void jt_text_centered(int y, uint16_t fg, uint16_t bg, const char *fmt, ...);
 
+/* Paint a centered "busy" box with `msg` and flip it to the screen
+ * immediately. Call this right before a blocking maple/VMU operation
+ * (which stalls the frame loop) so the user sees activity instead of a
+ * frozen frame. */
+void jt_show_busy(const char *msg);
+
 #endif

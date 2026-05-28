@@ -40,4 +40,34 @@ bool jt_apply_get_backup_enabled(void);
 /* String form for displaying a result code to the user. */
 const char *jt_apply_result_str(jt_apply_result_t r);
 
+/* ---- VMU LCD helpers --------------------------------------------------
+ * Push a 48x32 image to a VMU's physical LCD. The 32x32 mono icon is
+ * centered (8px padding left/right). Used by the editor to mirror the
+ * live mono canvas, and on mode-leave to restore the VMU to its
+ * "natural" stored ICONDATA icon. */
+
+/* Render a 32x32 mono bitmap (canvas mono_bits layout, MSB-first within
+ * byte, row-major) onto the VMU LCD. Returns 0 on success. */
+int jt_vmu_show_mono_bits(int port_idx, int slot_idx, const uint8_t *mono_bits);
+
+/* Read the VMU's ICONDATA_VMS, extract its mono icon, and push it to
+ * the LCD. If no ICONDATA exists or decode fails the LCD is cleared.
+ * Returns 0 on success, negative on error / missing device. */
+int jt_vmu_show_stored_icon(int port_idx, int slot_idx);
+
+/* If the VMU at (port, slot) has no ICONDATA_VMS, write the baked
+ * Joypad-logo default so things that live INSIDE ICONDATA (Real Mode /
+ * 3D BIOS, the LCD mono icon) have a file to attach to. No-op if one
+ * already exists. Returns 0 on success, negative on error / no device. */
+int jt_vmu_ensure_icondata(int port_idx, int slot_idx);
+
+/* "Change icon" handoff: the file manager sets a pending target VMU
+ * before sending the user to the Icon Library to choose an icon; the
+ * Library applies the chosen icon to that VMU and clears the target.
+ * take_ returns true and clears if a target was set. */
+void jt_apply_set_pending_target(int port_idx, int slot_idx);
+bool jt_apply_take_pending_target(int *port_idx, int *slot_idx);
+bool jt_apply_has_pending_target(void);
+void jt_apply_clear_pending_target(void);
+
 #endif /* JT_APPLY_H */

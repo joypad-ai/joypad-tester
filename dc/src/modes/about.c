@@ -46,7 +46,7 @@ static void about_draw(void)
     /* Centered logo at top, rendered in white per the UI/UX guide
      * for static / non-screensaver placements. */
     int logo_x = (640 - LOGO_W) / 2;
-    int logo_y = 16;
+    int logo_y = 28;   /* nudged down out of CRT top overscan */
     draw_logo_sprite(logo_x, logo_y, JT_COL_WHITE);
 
     /* Title under the logo. */
@@ -71,9 +71,9 @@ static void about_draw(void)
                      "Mode:   %s",
                      jt_video_is_progressive() ? "Progressive 60Hz" : "Interlaced 480i");
 
-    jt_text_centered(408, JT_COL_GREY, JT_COL_BLACK,
+    jt_text_centered(404, JT_COL_GREY, JT_COL_BLACK,
                      "github.com/joypad-ai/joypad-tester");
-    jt_text_centered(456, JT_COL_GREEN, JT_COL_BLACK,
+    jt_text_centered(428, JT_COL_GREEN, JT_COL_BLACK,
                      "Start: options menu");
 }
 

@@ -1,5 +1,62 @@
 # Joypad Tester — Dreamcast — Changelog
 
+## v1.0.0 — 2026-05-27
+
+First public release. The 0.2.x line rounded out feature parity with
+the web `dreamcast-icon-maker`; 1.0 stabilises the rendering pipeline
+and lands the workflow polish the project needs to be useful as a
+real Dreamcast utility (and a controller tester) on hardware.
+
+### Highlights
+
+- **Double-buffered rendering** — `DM_MULTIBUFFER` + `vid_flip`. Full
+  clear + redraw per frame, no beam-race flicker anywhere. Deleted
+  all the single-buffer machinery (cursor save-restore, dirty-flag
+  signatures, cell-highlight tracking, picker/menu/OSK redraw gating,
+  union-paint screensaver).
+- **VMU File Manager redesign** — top-level VMU list with the BIOS
+  icon thumbnail wrapped in the VMU's custom-color border (or the
+  preset BIOS icon shape when there's no `ICONDATA_VMS`). Drill into
+  a VMU's saves; **A** opens a details popup, **Y** extracts to the
+  editor, **X** deletes (with a confirm modal). Per-VMU **Options**
+  modal — palette-editor-style sliders for the BIOS color, L/R
+  toggles for Real Mode + Custom Color, **A** saves / **B** cancels,
+  **Y** syncs the VMU clock to the console time. Auto-writes a
+  default `ICONDATA_VMS` (the Joypad logo) when toggling Real Mode
+  on a VMU that has none.
+- **Live VMU LCD mirror** — in the Controller Tester, the slot-1 VMU
+  continuously renders the controller's D-pad / face buttons /
+  triggers / analog stick. In the Icon Editor, every connected VMU
+  mirrors the live mono canvas. Other modes restore the stored
+  ICONDATA LCD icon on leave.
+- **Controller subtype detection** — `Type:` column on the tester
+  reads the maple-reported `product_name` and maps Twin Stick /
+  Arcade Stick / Ascii Stick / Mission Stick / Fishing Controller /
+  Wheel / Pop'n / Densha / Maracas / DreamConn / Beat Mania / Samba
+  / Guitar to short labels. C/D/Z bits are now rendered alongside
+  A/B/X/Y/Start/D-pad.
+- **Editor workflow polish** — save flow is a 2-step wizard (pick
+  VMU → Apply-as-current-icon vs Store-in-library), with the
+  destination mode auto-loading after. Real Mode is now a VMU-level
+  toggle in the File Manager (auto-preserved across icon swaps);
+  the editor button is gone. D-pad nudges the cursor with
+  hold-to-repeat. Alpha is rendered via a transparency checkerboard
+  on the canvas, swatches, and palette-editor preview.
+- **Branded library icon** — the `VMUICONS.VMS` library save carries
+  a baked Joypad-logo BIOS icon. Asset pipeline: drop a new
+  `ICONDATA_VMS` into `assets/library_icon/` and the Makefile
+  regenerates `gen_library_icon.h` automatically.
+- **Rumble fixed on hardware** — old raw value left `motor = 15`,
+  rejected by real Purupuru packs (emulator was ignoring it). Now
+  uses the structured `purupuru_effect_t` with `motor = 1`.
+- **CRT-safe layout** — every page's header/footer pulled into the
+  ~y=24..452 safe band so overscan no longer clips them.
+- **Bug fixes** — file-manager thumbs no longer crop to top-left
+  24×24; OSK no longer types a stray key from the picker's
+  confirming A; menu-close artifacts gone; mono palette panel
+  matches the web app's VMU-LCD look; mono-invert correctly trips
+  the dirty hash (and is moot under double buffering anyway).
+
 ## v0.2.2 — 2026-05-17
 
 Polish + parity round. Closes the remaining web-app feature gaps

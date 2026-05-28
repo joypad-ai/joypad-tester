@@ -18,4 +18,9 @@ extern const jt_mode_t jt_mode_browser;
  * canvas via the shared editor-canvas handle. Mode plumbing only. */
 void jt_browser_push_to_editor(const jt_icon_t *icon);
 
+/* Push the "change icon" base (the target VMU's current icon) into the
+ * editor. Called by the Icon Library when it's empty, so the editor
+ * opens pre-seeded with the VMU's current icon to edit from. */
+void jt_browser_push_change_base(void);
+
 #endif

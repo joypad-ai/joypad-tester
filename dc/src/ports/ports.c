@@ -21,11 +21,13 @@
 
 jt_port_state_t jt_ports[JT_NUM_PORTS];
 
-/* VMU block counts come from a maple round-trip that costs ~16ms per
- * read. Refresh only every Nth poll so the rest of the frame loop
- * stays cheap. At 60fps + N=30 this is ~2 reads/sec, plenty for
- * the live tester display. */
-#define VMU_REFRESH_INTERVAL 30
+/* VMU block counts come from a maple round-trip that BLOCKS the main
+ * thread (~16ms each). Reading every connected VMU in the same frame
+ * bursts that cost into a periodic multi-frame hitch -- dropped input
+ * and a stuttering screensaver. Instead we refresh just ONE (port,slot)
+ * per stride, rotating through them all, so the cost is spread one
+ * read-pair at a time. Each VMU still refreshes ~once/second. */
+#define VMU_REFRESH_STRIDE 8
 static uint32_t poll_counter = 0;
 
 static jt_port_style_t style_from_func(uint32_t func)
@@ -98,7 +100,12 @@ static void poll_kbd(jt_port_state_t *port, maple_device_t *dev)
 void jt_ports_poll(void)
 {
     poll_counter++;
-    bool refresh_vmu_blocks = (poll_counter % VMU_REFRESH_INTERVAL) == 0;
+    /* At most one (port,slot) refreshes this frame, cycling through all
+     * of them, so the blocking maple reads never burst together. */
+    const int total_slots = JT_NUM_PORTS * JT_NUM_SLOTS;
+    int refresh_slot = ((poll_counter % VMU_REFRESH_STRIDE) == 0)
+        ? (int)((poll_counter / VMU_REFRESH_STRIDE) % total_slots)
+        : -1;
 
     for (int p = 0; p < JT_NUM_PORTS; p++) {
         jt_port_state_t *port = &jt_ports[p];
@@ -110,6 +117,7 @@ void jt_ports_poll(void)
             port->present = false;
             port->style = JT_STYLE_EMPTY;
             port->func_mask = 0;
+            port->product_name[0] = '\0';
             memset(&port->pad, 0, sizeof(port->pad));
             memset(&port->mouse, 0, sizeof(port->mouse));
             memset(&port->kbd, 0, sizeof(port->kbd));
@@ -117,6 +125,18 @@ void jt_ports_poll(void)
             port->present = true;
             port->func_mask = dev->info.functions;
             port->style = style_from_func(dev->info.functions);
+            /* Copy the maple-reported product name + trim trailing
+             * whitespace so subtype labels (Twin Stick, Arcade Stick)
+             * survive to the tester display. */
+            size_t pn_len = sizeof(dev->info.product_name);
+            if (pn_len > sizeof(port->product_name) - 1)
+                pn_len = sizeof(port->product_name) - 1;
+            memcpy(port->product_name, dev->info.product_name, pn_len);
+            port->product_name[pn_len] = '\0';
+            for (int i = (int)strlen(port->product_name) - 1; i >= 0; i--) {
+                if (port->product_name[i] == ' ') port->product_name[i] = '\0';
+                else break;
+            }
             switch (port->style) {
                 case JT_STYLE_PAD:      poll_pad(port, dev); break;
                 case JT_STYLE_MOUSE:    poll_mouse(port, dev); break;
@@ -144,7 +164,7 @@ void jt_ports_poll(void)
              * (block_total == -1) and on the throttled cadence; the
              * result rarely changes mid-frame anyway. */
             if (slot->kind == JT_SLOT_VMU &&
-                (refresh_vmu_blocks || slot->block_total < 0)) {
+                ((p * JT_NUM_SLOTS + s) == refresh_slot || slot->block_total < 0)) {
                 vmu_root_t root;
                 if (vmufs_root_read(sub, &root) == 0) {
                     slot->block_total = root.blk_cnt;
