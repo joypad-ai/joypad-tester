@@ -4,8 +4,9 @@
 # first run (~10-15 min — KOS + dc-chain compiled from source), then
 # runs `make` inside it.
 #
-# Output: build/joypad-tester-dreamcast.cdi (selfboot disc image,
-# bootable on emulators and real DC hardware).
+# Output: build/joypad_tester_dc_v<VERSION>.cdi (selfboot disc image,
+# bootable on emulators and real DC hardware). Filename matches the
+# GH Actions release artifact shape; VERSION comes from dc/VERSION.
 
 set -euo pipefail
 
@@ -26,7 +27,8 @@ case "${1:-build}" in
             -u "$(id -u):$(id -g)" \
             "$IMAGE_TAG" \
             make
-        echo "[build_docker.sh] Built build/joypad-tester-dreamcast.cdi"
+        VER=$(tr -d '[:space:]' < VERSION)
+        echo "[build_docker.sh] Built build/joypad_tester_dc_v${VER}.cdi"
         "$(dirname "$0")/../collect.sh" dc || true
         ;;
     clean)

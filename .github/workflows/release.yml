@@ -256,7 +256,9 @@ jobs:
           # (~700MB -> ~2MB) and let the user extract the .cdi.
           VERSION="${{ needs.parse.outputs.version }}"
           mkdir -p _release
-          cp build/joypad-tester-dreamcast.cdi "_release/joypad_tester_dc_v${VERSION}.cdi"
+          # The Makefile now emits the release-shape filename directly, so
+          # staging is just a move into _release/ before zipping.
+          mv "build/joypad_tester_dc_v${VERSION}.cdi" "_release/joypad_tester_dc_v${VERSION}.cdi"
           ( cd _release && zip -9 -m "joypad_tester_dc_v${VERSION}.cdi.zip" \
                                      "joypad_tester_dc_v${VERSION}.cdi" )
           ls -la _release/

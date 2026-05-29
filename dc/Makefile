@@ -11,7 +11,6 @@
 # its entrypoint, so plain `make` works inside the container. On a
 # Linux host with KOS installed, source $KOS_BASE/environ.sh first.
 
-TARGET   := joypad-tester-dreamcast
 BUILDDIR := build
 SRCDIR   := src
 
@@ -19,6 +18,11 @@ SRCDIR   := src
 # injected at compile time so app.h's JT_VERSION_STR macro stays in
 # sync without us touching the source.
 VERSION := $(shell cat VERSION | tr -d '[:space:]')
+
+# Output target name matches the release artifact shape
+# (joypad_tester_dc_v<semver>.cdi) so the locally built CDI, the
+# collect.sh artifact, and the GH Actions release all line up.
+TARGET   := joypad_tester_dc_v$(VERSION)
 
 # Source layout. Keep modes/* / input/* / ports/* / ui/* / video/*
 # as discrete translation units so future testers can adopt the

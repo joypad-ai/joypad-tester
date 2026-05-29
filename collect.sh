@@ -73,7 +73,8 @@ if selected 3do; then
     H=$(rev 3do); copy "joypad_tester_3do_${H}.iso" "$ROOT"/3do/build/joypad-tester.iso
 fi
 if selected dc; then
-    H=$(rev dc); copy "joypad_tester_dc_${H}.cdi" "$ROOT"/dc/build/joypad-tester-dreamcast.cdi
+    H=$(rev dc); DCVER=$(tr -d '[:space:]' < "$ROOT"/dc/VERSION); \
+        copy "joypad_tester_dc_${H}.cdi" "$ROOT"/dc/build/joypad_tester_dc_v${DCVER}.cdi
 fi
 if selected n64; then
     H=$(rev n64); copy "joypad_tester_n64_${H}.z64" "$ROOT"/n64/build/joypad-tester.z64
