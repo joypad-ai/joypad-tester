@@ -97,13 +97,20 @@ $(ELF): $(OBJECTS)
 	@mkdir -p $(BUILDDIR)
 	kos-cc -o $@ $(OBJECTS)
 
+# Custom license-screen ("boot") logo embedded into IP.BIN. MR-format
+# image (320x90, black-on-white joypad logo) generated offline by
+# buildtools/make_mr_logo.py and committed under assets/. mkdcdisc copies
+# it verbatim into IP.BIN (must stay <= 8192 bytes).
+BOOT_LOGO := assets/boot_logo/joypad_boot.mr
+
 # mkdcdisc subsumes scramble + IP.BIN + iso9660 + CDI conversion in
 # one call. Default IP.BIN already advertises VGA-cable compatibility
 # (peripheral mask 0xE000F10 has the 0x10 VGA bit set), so VGA boxes
 # accept the disc without extra flags.
-$(CDI): $(ELF)
+$(CDI): $(ELF) $(BOOT_LOGO)
 	mkdcdisc -e $(ELF) -o $(CDI) -n "JOYPAD TESTER" \
-	    -a "Robert Dale Smith" -r 20260516
+	    -a "Robert Dale Smith" -r 20260516 \
+	    -i $(BOOT_LOGO)
 	@echo "Built $(CDI)"
 
 clean:

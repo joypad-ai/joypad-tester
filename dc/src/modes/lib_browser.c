@@ -119,7 +119,12 @@ static void delete_selected(void)
 static void load_selected_to_editor(void)
 {
     if (selected < 0 || selected >= flat_count) return;
-    jt_browser_push_to_editor(&flat[selected].entry.icon);
+    flat_entry_t *fe = &flat[selected];
+    /* Push WITH source so the editor's "Save" overwrites this entry in
+     * place (vs "Save As", which creates a new one). */
+    jt_browser_push_to_editor_src(&fe->entry.icon,
+                                  fe->port, fe->slot, fe->lib_index,
+                                  fe->entry.name);
     jt_request_mode(JT_MODE_VMU_EDITOR);
 }
 

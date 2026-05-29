@@ -25,6 +25,9 @@
  * VMS palette + 4bpp bitmap layout the save format expects. */
 static void build_library_icon(uint8_t *out_bitmap, uint8_t *out_palette)
 {
+    /* Color icon: white object on black background (palette index 0 =
+     * black bg, 1 = white object), used verbatim. The monochrome icon is
+     * a separate asset (joypad_logo_icondata_full) handled independently. */
     memcpy(out_palette, joypad_logo_palette, sizeof(joypad_logo_palette));
     memcpy(out_bitmap,  joypad_logo_bitmap,  sizeof(joypad_logo_bitmap));
 }

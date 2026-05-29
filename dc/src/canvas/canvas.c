@@ -80,25 +80,55 @@ void jt_canvas_to_icon(const jt_canvas_t *c, jt_icon_t *icon)
     icon->real_mode_flag = c->real_mode_flag;
 }
 
-void jt_canvas_push_undo(jt_canvas_t *c)
+static void snap_save(jt_canvas_snapshot_t *s, const jt_canvas_t *c)
 {
-    c->undo_head = (c->undo_head + 1) % JT_UNDO_DEPTH;
-    jt_canvas_snapshot_t *s = &c->undo[c->undo_head];
     memcpy(s->color_indices, c->color_indices, sizeof(c->color_indices));
     memcpy(s->mono_bits,     c->mono_bits,     sizeof(c->mono_bits));
     memcpy(s->palette,       c->palette,       sizeof(c->palette));
+}
+
+static void snap_load(const jt_canvas_snapshot_t *s, jt_canvas_t *c)
+{
+    memcpy(c->color_indices, s->color_indices, sizeof(c->color_indices));
+    memcpy(c->mono_bits,     s->mono_bits,     sizeof(c->mono_bits));
+    memcpy(c->palette,       s->palette,       sizeof(c->palette));
+}
+
+void jt_canvas_push_undo(jt_canvas_t *c)
+{
+    c->undo_head = (c->undo_head + 1) % JT_UNDO_DEPTH;
+    snap_save(&c->undo[c->undo_head], c);
     if (c->undo_count < JT_UNDO_DEPTH) c->undo_count++;
+    /* A fresh edit invalidates any forward (redo) history. */
+    c->redo_count = 0;
 }
 
 bool jt_canvas_undo(jt_canvas_t *c)
 {
     if (c->undo_count == 0) return false;
-    const jt_canvas_snapshot_t *s = &c->undo[c->undo_head];
-    memcpy(c->color_indices, s->color_indices, sizeof(c->color_indices));
-    memcpy(c->mono_bits,     s->mono_bits,     sizeof(c->mono_bits));
-    memcpy(c->palette,       s->palette,       sizeof(c->palette));
+    /* Stash the current (post-edit) state so redo can return to it. */
+    c->redo_head = (c->redo_head + 1) % JT_UNDO_DEPTH;
+    snap_save(&c->redo[c->redo_head], c);
+    if (c->redo_count < JT_UNDO_DEPTH) c->redo_count++;
+    /* Revert to the most recent pre-edit snapshot. */
+    snap_load(&c->undo[c->undo_head], c);
     c->undo_head = (c->undo_head - 1 + JT_UNDO_DEPTH) % JT_UNDO_DEPTH;
     c->undo_count--;
+    return true;
+}
+
+bool jt_canvas_redo(jt_canvas_t *c)
+{
+    if (c->redo_count == 0) return false;
+    /* Push the current state back onto the undo ring (without clearing
+     * redo, so push_undo's reset doesn't fire). */
+    c->undo_head = (c->undo_head + 1) % JT_UNDO_DEPTH;
+    snap_save(&c->undo[c->undo_head], c);
+    if (c->undo_count < JT_UNDO_DEPTH) c->undo_count++;
+    /* Re-apply the most recently undone snapshot. */
+    snap_load(&c->redo[c->redo_head], c);
+    c->redo_head = (c->redo_head - 1 + JT_UNDO_DEPTH) % JT_UNDO_DEPTH;
+    c->redo_count--;
     return true;
 }
 

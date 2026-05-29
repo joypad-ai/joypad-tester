@@ -63,15 +63,17 @@ bool jt_browser_consume_pending(jt_icon_t *out);
 
 #define SWATCH_W     22
 
-/* Document-level buttons (Save / Name) live in the right-hand status
- * column, stacked below the status text, so they read as a separate
- * group from the per-pane Reset/Invert buttons. Real Mode is now a
- * VMU-level setting in the file manager -- apply preserves the prior
- * flag automatically, so the editor doesn't need its own toggle. */
-#define DOCBTN_X     450
-#define DOCBTN_W     176
-#define DOCBTN_SAVE_Y 288
-#define DOCBTN_NAME_Y 320
+/* Document-level buttons (Save / Save As / Apply) live in the right-hand
+ * status column, stacked below the status text, so they read as a
+ * separate group from the per-pane Reset/Invert buttons. The name is set
+ * as part of saving (no separate "Name" button). Real Mode is a VMU-level
+ * setting in the file manager -- apply preserves the prior flag
+ * automatically, so the editor doesn't need its own toggle. */
+#define DOCBTN_X       450
+#define DOCBTN_W       176
+#define DOCBTN_SAVE_Y   264
+#define DOCBTN_SAVEAS_Y 296
+#define DOCBTN_APPLY_Y  328
 
 static jt_canvas_t canvas;
 static bool initialized = false;
@@ -79,10 +81,14 @@ static bool initialized = false;
 /* Forward declarations for helpers used by editor_enter before their
  * definitions appear in this file. */
 static uint32_t aggregate_pad_buttons(void);
+static uint8_t  aggregate_trig_l(void);
+static uint8_t  aggregate_trig_r(void);
 
 static uint32_t last_btns = 0;
 static bool     last_action_button = false;     /* A held last frame */
 static bool     last_b_button      = false;     /* B held last frame */
+static bool     last_trig_l = false;            /* L trigger (undo) last frame */
+static bool     last_trig_r = false;            /* R trigger (redo) last frame */
 
 /* D-pad cursor-nudge auto-repeat: per-direction held-frame counters
  * (order: Up, Down, Left, Right). DELAY = frames before auto-repeat
@@ -91,25 +97,42 @@ static bool     last_b_button      = false;     /* B held last frame */
 #define DPAD_REPEAT_RATE  4
 static int dpad_hold[4] = {0, 0, 0, 0};
 
-/* Unified save flow. The Save button drives a two-step wizard:
- *   stage 1 (SAVE_PICK_VMU)    -> choose which connected VMU
- *   stage 2 (SAVE_PICK_ACTION) -> "Apply as current icon" (ICONDATA_VMS)
- *                                 vs "Store in icon library" (VMUICONS.VMS)
- *   stage 3 (name OSK)         -> only on the library-store path
- * On completion the user is dropped into the File Manager (apply) or the
- * Icon Library (store) to see the result. */
+/* Save flow. Three document buttons drive it:
+ *   Save    -> if editing a library entry, overwrite it in place (no
+ *              prompts); otherwise behaves like Save As.
+ *   Save As -> pick a VMU, name it, append a NEW library entry.
+ *   Apply   -> pick a VMU, write the icon as that VMU's current icon
+ *              (ICONDATA_VMS).
+ * Save As / Apply open a one-step VMU picker (SAVE_PICK_VMU); save_kind
+ * records what the picked VMU is for. Save (overwrite) skips the picker
+ * entirely since the source VMU/slot is already known. */
 typedef enum {
     SAVE_NONE = 0,
     SAVE_PICK_VMU,
-    SAVE_PICK_ACTION,
 } save_stage_t;
+typedef enum {
+    SK_NONE = 0,
+    SK_SAVEAS,   /* picked VMU -> name OSK -> append new library entry */
+    SK_APPLY,    /* picked VMU -> write ICONDATA_VMS */
+} save_kind_t;
 static save_stage_t  save_stage   = SAVE_NONE;
+static save_kind_t   save_kind    = SK_NONE;
 static int           picker_idx   = 0;      /* selection in current stage */
-static int           save_vmu_port = -1, save_vmu_slot = -1;  /* chosen VMU */
+static int           picker_scroll = 0;     /* top row of the VMU pick window */
+#define PICKER_VISIBLE 4                     /* VMU rows that fit in the modal */
 static char          apply_result_text[80] = {0};
 static unsigned      apply_result_frames = 0;
 static int           apply_target_count = 0;
 static struct { int port, slot; } apply_targets[JT_NUM_PORTS * JT_NUM_SLOTS];
+
+/* The library entry currently being edited, if any. Set when the Icon
+ * Library hands an entry to the editor (Y = Edit). "Save" overwrites this
+ * entry in place; a fresh/seeded canvas has no source so "Save" = Save As. */
+static struct {
+    bool valid;
+    int  port, slot, lib_index;
+    char name[17];
+} edit_source;
 
 /* While the library store is in flight after the name OSK, remember
  * which VMU to write to once the name comes back. */
@@ -288,7 +311,25 @@ static void editor_enter(void)
     if (jt_browser_consume_pending(&loaded)) {
         jt_canvas_from_icon(&canvas, &loaded);
         jt_canvas_mono_sync_palette(&canvas);
+        /* Record the library source (if any) so "Save" overwrites the
+         * opened entry in place. A plain push (no source) leaves this
+         * invalid, so "Save" falls through to Save As. */
+        int sp, ss, si;
+        char sn[17];
+        if (jt_browser_consume_source(&sp, &ss, &si, sn, sizeof(sn))) {
+            edit_source.valid = true;
+            edit_source.port = sp;
+            edit_source.slot = ss;
+            edit_source.lib_index = si;
+            strncpy(edit_source.name, sn, sizeof(edit_source.name) - 1);
+            edit_source.name[sizeof(edit_source.name) - 1] = '\0';
+        } else {
+            edit_source.valid = false;
+        }
     }
+    /* No pending icon => re-entry (e.g. back from the options menu);
+     * preserve the canvas AND edit_source so an in-progress edit keeps
+     * its "overwrite target". */
 
     /* Reset all modal/input state on enter. Otherwise a Start press
      * that confirmed the options menu (selecting "VMU Icon Editor")
@@ -297,7 +338,9 @@ static void editor_enter(void)
      * any stale picker / palette-editor / OSK-awaiting state from a
      * previous visit. */
     save_stage = SAVE_NONE;
+    save_kind = SK_NONE;
     picker_idx = 0;
+    picker_scroll = 0;
     palette_edit_idx = -1;
     save_awaiting_name = false;
     pending_save_port = -1;
@@ -305,6 +348,8 @@ static void editor_enter(void)
     last_btns = aggregate_pad_buttons();
     last_action_button = (last_btns & CONT_A) || jt_cursor.button_a;
     last_b_button      = (last_btns & CONT_B) || jt_cursor.button_b;
+    last_trig_l = aggregate_trig_l() > 128;
+    last_trig_r = aggregate_trig_r() > 128;
     dpad_hold[0] = dpad_hold[1] = dpad_hold[2] = dpad_hold[3] = 0;
     /* Force the live mirror to push on the first frame in the editor. */
     lcd_last_pushed_valid = false;
@@ -329,6 +374,27 @@ static uint32_t aggregate_pad_buttons(void)
     return b;
 }
 
+/* Strongest L/R analog trigger across all connected pads. */
+static uint8_t aggregate_trig_l(void)
+{
+    uint8_t m = 0;
+    for (int p = 0; p < JT_NUM_PORTS; p++)
+        if (jt_ports[p].present && jt_ports[p].style == JT_STYLE_PAD &&
+            jt_ports[p].pad.trig_l > m)
+            m = jt_ports[p].pad.trig_l;
+    return m;
+}
+
+static uint8_t aggregate_trig_r(void)
+{
+    uint8_t m = 0;
+    for (int p = 0; p < JT_NUM_PORTS; p++)
+        if (jt_ports[p].present && jt_ports[p].style == JT_STYLE_PAD &&
+            jt_ports[p].pad.trig_r > m)
+            m = jt_ports[p].pad.trig_r;
+    return m;
+}
+
 /* Region hit-test. Returns the kind of region under (x,y). */
 typedef enum {
     R_NONE = 0,
@@ -340,7 +406,8 @@ typedef enum {
     R_BTN_MONO_RESET,
     R_BTN_MONO_INVERT,
     R_BTN_SAVE,
-    R_BTN_NAME,
+    R_BTN_SAVEAS,
+    R_BTN_APPLY,
 } region_t;
 
 static region_t region_at(int x, int y, int *cx, int *cy, int *arg)
@@ -386,13 +453,16 @@ static region_t region_at(int x, int y, int *cx, int *cy, int *arg)
     }
     /* Document-level buttons (right column, stacked). */
     if (x >= DOCBTN_X && x < DOCBTN_X + DOCBTN_W) {
-        if (y >= DOCBTN_SAVE_Y && y < DOCBTN_SAVE_Y + 24) return R_BTN_SAVE;
-        if (y >= DOCBTN_NAME_Y && y < DOCBTN_NAME_Y + 24) return R_BTN_NAME;
+        if (y >= DOCBTN_SAVE_Y   && y < DOCBTN_SAVE_Y + 24)   return R_BTN_SAVE;
+        if (y >= DOCBTN_SAVEAS_Y && y < DOCBTN_SAVEAS_Y + 24) return R_BTN_SAVEAS;
+        if (y >= DOCBTN_APPLY_Y  && y < DOCBTN_APPLY_Y + 24)  return R_BTN_APPLY;
     }
     return R_NONE;
 }
 
-static void open_save_flow(void)
+/* Open the VMU picker for a save_kind that needs a destination
+ * (Save As, Apply). Returns with a toast if no VMU is connected. */
+static void open_vmu_picker(save_kind_t kind)
 {
     rebuild_apply_targets();
     if (apply_target_count == 0) {
@@ -400,10 +470,66 @@ static void open_save_flow(void)
                  "No VMU detected -- plug one in to save.");
         apply_result_frames = 180;
         save_stage = SAVE_NONE;
+        save_kind = SK_NONE;
         return;
     }
+    save_kind = kind;
     save_stage = SAVE_PICK_VMU;
     picker_idx = 0;
+    picker_scroll = 0;
+}
+
+static void start_save_as(void) { open_vmu_picker(SK_SAVEAS); }
+static void start_apply(void)   { open_vmu_picker(SK_APPLY); }
+
+/* Overwrite the opened library entry in place: same VMU, same slot in the
+ * archive, keeping its name (rename happens at the Library level). */
+static void do_overwrite_save(void)
+{
+    maple_device_t *dev = maple_enum_dev(edit_source.port, edit_source.slot + 1);
+    if (!dev || !dev->valid) {
+        snprintf(apply_result_text, sizeof(apply_result_text),
+                 "%c%d: VMU disconnected", 'A' + edit_source.port,
+                 edit_source.slot + 1);
+        apply_result_frames = 180;
+        return;
+    }
+    jt_show_busy("Saving...");
+    jt_library_t lib;
+    int rc = jt_library_load(dev, &lib);
+    if (rc < 0) {
+        snprintf(apply_result_text, sizeof(apply_result_text),
+                 "%c%d: Library load failed (%d)", 'A' + edit_source.port,
+                 edit_source.slot + 1, rc);
+        apply_result_frames = 180;
+        return;
+    }
+    if (edit_source.lib_index < 0 || edit_source.lib_index >= lib.entry_count) {
+        /* Entry vanished (deleted / reordered since open) -- fall back to
+         * appending a fresh copy under its original name. */
+        save_to_library(edit_source.port, edit_source.slot, edit_source.name);
+        return;
+    }
+    jt_library_entry_t *e = &lib.entries[edit_source.lib_index];
+    strncpy(e->description, canvas.description, JT_LIBRARY_DESC_LEN);
+    e->timestamp = (uint64_t)time(NULL);
+    e->flags = JT_LIB_FLAG_COLOR | JT_LIB_FLAG_MONO;
+    if (canvas.real_mode_flag) e->flags |= JT_LIB_FLAG_REALMODE;
+    jt_canvas_to_icon(&canvas, &e->icon);
+
+    int wrc = jt_library_save(dev, &lib);
+    snprintf(apply_result_text, sizeof(apply_result_text), "%c%d: %s",
+             'A' + edit_source.port, edit_source.slot + 1,
+             (wrc == 0) ? "Saved" : "Write failed");
+    apply_result_frames = 180;
+}
+
+/* The Save button: overwrite the opened entry if there is one, else
+ * fall through to Save As (new entry). */
+static void do_save(void)
+{
+    if (edit_source.valid) do_overwrite_save();
+    else                   start_save_as();
 }
 
 static void editor_update(float dt)
@@ -416,17 +542,13 @@ static void editor_update(float dt)
         char buf[JT_OSK_MAX_LEN + 1];
         if (jt_osk_consume_text(buf, sizeof(buf))) {
             if (save_awaiting_name) {
-                /* Library-store path: write the entry, then drop the
-                 * user into the Icon Library so they see it land. */
+                /* Save As: append the new entry, then drop the user into
+                 * the Icon Library so they see it land. */
                 save_to_library(pending_save_port, pending_save_slot, buf);
                 save_awaiting_name = false;
                 pending_save_port = -1;
                 pending_save_slot = -1;
                 jt_request_mode(JT_MODE_LIB_BROWSER);
-            } else {
-                /* Plain naming: update description. */
-                strncpy(canvas.description, buf, sizeof(canvas.description) - 1);
-                canvas.description[sizeof(canvas.description) - 1] = '\0';
             }
         }
         return;
@@ -458,58 +580,67 @@ static void editor_update(float dt)
     }
 
     if (save_stage != SAVE_NONE) {
-        int max_idx = (save_stage == SAVE_PICK_VMU)
-                    ? apply_target_count - 1 : 1;
+        int max_idx = apply_target_count - 1;
         if (edges & CONT_DPAD_UP)   { if (picker_idx > 0)       picker_idx--; }
         if (edges & CONT_DPAD_DOWN) { if (picker_idx < max_idx) picker_idx++; }
+        /* Keep the selection inside the visible window. */
+        if (picker_idx < picker_scroll) picker_scroll = picker_idx;
+        if (picker_idx >= picker_scroll + PICKER_VISIBLE)
+            picker_scroll = picker_idx - PICKER_VISIBLE + 1;
 
         if (edges & CONT_A) {
-            if (save_stage == SAVE_PICK_VMU) {
-                /* Lock in the chosen VMU, advance to the action step. */
-                save_vmu_port = apply_targets[picker_idx].port;
-                save_vmu_slot = apply_targets[picker_idx].slot;
-                save_stage = SAVE_PICK_ACTION;
-                picker_idx = 0;
-            } else { /* SAVE_PICK_ACTION */
-                if (picker_idx == 0) {
-                    /* Apply as the VMU's current icon (ICONDATA_VMS),
-                     * then jump to the File Manager to view it. */
-                    jt_icon_t icon;
-                    jt_canvas_to_icon(&canvas, &icon);
-                    jt_show_busy("Applying icon...");
-                    jt_apply_result_t rr =
-                        jt_apply_icondata(&icon, save_vmu_port, save_vmu_slot);
-                    snprintf(apply_result_text, sizeof(apply_result_text),
-                             "%c%d: %s", 'A' + save_vmu_port,
-                             save_vmu_slot + 1, jt_apply_result_str(rr));
-                    apply_result_frames = 180;
-                    save_stage = SAVE_NONE;
-                    jt_request_mode(JT_MODE_BROWSER);
-                } else {
-                    /* Store in the icon library: ask for a name first,
-                     * then the OSK handler writes it + jumps to the
-                     * Icon Library. Seed the OSK with the description. */
-                    pending_save_port = save_vmu_port;
-                    pending_save_slot = save_vmu_slot;
-                    save_awaiting_name = true;
-                    save_stage = SAVE_NONE;
-                    jt_osk_begin("Library entry name",
-                                 canvas.description, JT_LIBRARY_NAME_LEN);
-                }
+            int port = apply_targets[picker_idx].port;
+            int slot = apply_targets[picker_idx].slot;
+            if (save_kind == SK_APPLY) {
+                /* Write the icon as the VMU's current icon (ICONDATA_VMS),
+                 * then jump to the File Manager to view it. */
+                jt_icon_t icon;
+                jt_canvas_to_icon(&canvas, &icon);
+                jt_show_busy("Applying icon...");
+                jt_apply_result_t rr = jt_apply_icondata(&icon, port, slot);
+                snprintf(apply_result_text, sizeof(apply_result_text),
+                         "%c%d: %s", 'A' + port, slot + 1,
+                         jt_apply_result_str(rr));
+                apply_result_frames = 180;
+                save_stage = SAVE_NONE;
+                save_kind = SK_NONE;
+                jt_request_mode(JT_MODE_BROWSER);
+            } else { /* SK_SAVEAS */
+                /* Ask for a name, then the OSK handler appends the new
+                 * entry + jumps to the Icon Library. Seed with the
+                 * source name (if editing one) else the description. */
+                pending_save_port = port;
+                pending_save_slot = slot;
+                save_awaiting_name = true;
+                save_stage = SAVE_NONE;
+                save_kind = SK_NONE;
+                const char *seed = (edit_source.valid && edit_source.name[0])
+                                 ? edit_source.name : canvas.description;
+                jt_osk_begin("Library entry name", seed, JT_LIBRARY_NAME_LEN);
             }
         }
         if (edges & CONT_B) {
-            /* Step back a stage; cancel entirely from the first step. */
-            if (save_stage == SAVE_PICK_ACTION) {
-                save_stage = SAVE_PICK_VMU;
-                picker_idx = 0;
-            } else {
-                save_stage = SAVE_NONE;
-            }
+            save_stage = SAVE_NONE;
+            save_kind = SK_NONE;
         }
         last_btns = btns;
         return;
     }
+
+    /* L trigger = undo, R trigger = redo. Triggers are analog; treat a
+     * press as crossing the half-way point, edge-detected so one pull is
+     * one step. mono_sync_palette resyncs the toggle row since snapshots
+     * don't store it. */
+    bool l_now = aggregate_trig_l() > 128;
+    bool r_now = aggregate_trig_r() > 128;
+    if (l_now && !last_trig_l) {
+        if (jt_canvas_undo(&canvas)) jt_canvas_mono_sync_palette(&canvas);
+    }
+    if (r_now && !last_trig_r) {
+        if (jt_canvas_redo(&canvas)) jt_canvas_mono_sync_palette(&canvas);
+    }
+    last_trig_l = l_now;
+    last_trig_r = r_now;
 
     /* Y cycles tool (Draw / Fill). */
     if (edges & CONT_Y) {
@@ -611,11 +742,9 @@ static void editor_update(float dt)
             case R_BTN_COLOR_RESET:  jt_canvas_color_reset(&canvas); break;
             case R_BTN_MONO_RESET:   jt_canvas_mono_reset(&canvas);  break;
             case R_BTN_MONO_INVERT:  jt_canvas_mono_invert(&canvas); break;
-            case R_BTN_SAVE:         open_save_flow();               break;
-            case R_BTN_NAME:
-                jt_osk_begin("Description (16 chars max)",
-                             canvas.description, 16);
-                break;
+            case R_BTN_SAVE:         do_save();                      break;
+            case R_BTN_SAVEAS:       start_save_as();                break;
+            case R_BTN_APPLY:        start_apply();                  break;
             default: break;
         }
     }
@@ -790,12 +919,23 @@ static void draw_button(int x, int y, int w, const char *label, bool on)
     uint16_t bg = on ? JT_COL_YELLOW : JT_RGB565(60, 60, 60);
     uint16_t fg = on ? JT_COL_BLACK : JT_COL_WHITE;
     fill_rect(x, y, w, 24, bg);
-    fill_rect(x, y, w, 1, JT_COL_WHITE);
-    fill_rect(x, y + 23, w, 1, JT_COL_WHITE);
+    /* Label BEFORE the border: bfont cells are opaque 12x24 blocks, and
+     * the button is only 24px tall, so a centered label's background
+     * would otherwise paint over the bottom border (and the left/right
+     * borders on buttons whose label fills the full width, e.g. Reset/
+     * Invert). Stroke the 1px frame last so it always sits on top. */
+    int tx = x + (w - (int)strlen(label) * 12) / 2;
+    jt_text(tx, y, fg, bg, "%s", label);   /* top-anchored: 24px cell fits the 24px button */
+    /* Top/bottom borders are 2px tall: on interlaced 480i output (composite
+     * /RGB cable -- only VGA is progressive) a 1px-tall horizontal line
+     * lands in just one field and strobes at 30Hz, so a crisp button frame
+     * flickers badly on a real console. Two scanlines put the edge in both
+     * fields. Left/right borders cross every scanline, so they don't
+     * flicker and stay 1px. */
+    fill_rect(x, y, w, 2, JT_COL_WHITE);
+    fill_rect(x, y + 22, w, 2, JT_COL_WHITE);
     fill_rect(x, y, 1, 24, JT_COL_WHITE);
     fill_rect(x + w - 1, y, 1, 24, JT_COL_WHITE);
-    int tx = x + (w - (int)strlen(label) * 12) / 2;
-    jt_text(tx, y + 2, fg, bg, "%s", label);
 }
 
 static void draw_buttons(void)
@@ -805,9 +945,13 @@ static void draw_buttons(void)
     draw_button(MONO_X,  BUTTON_Y, 60, "Reset", false);
     draw_button(MONO_X + 72, BUTTON_Y, 72, "Invert", false);
 
-    /* Document-level ops in the right column, stacked as a group. */
-    draw_button(DOCBTN_X, DOCBTN_SAVE_Y, DOCBTN_W, "Save", false);
-    draw_button(DOCBTN_X, DOCBTN_NAME_Y, DOCBTN_W, "Name", false);
+    /* Document-level ops in the right column, stacked as a group. The
+     * Save label reflects what it'll do: overwrite the opened entry, or
+     * (for a fresh canvas) create a new one. */
+    draw_button(DOCBTN_X, DOCBTN_SAVE_Y,   DOCBTN_W,
+                edit_source.valid ? "Save" : "Save (new)", false);
+    draw_button(DOCBTN_X, DOCBTN_SAVEAS_Y, DOCBTN_W, "Save As", false);
+    draw_button(DOCBTN_X, DOCBTN_APPLY_Y,  DOCBTN_W, "Apply to VMU", false);
 }
 
 static const char *tool_name(jt_tool_t t)
@@ -826,11 +970,12 @@ static void draw_status(void)
     jt_text(x, y,       JT_COL_YELLOW, JT_COL_BLACK, "Tool:  %s", tool_name(canvas.tool));
     jt_text(x, y + 24,  JT_COL_YELLOW, JT_COL_BLACK, "Pri:   %02d", canvas.primary_color);
     jt_text(x, y + 48,  JT_COL_CYAN,   JT_COL_BLACK, "Sec:   %02d", canvas.secondary_color);
-    jt_text(x, y + 72,  JT_COL_GREY,   JT_COL_BLACK, "Undo:  %d/%d",
-            canvas.undo_count, JT_UNDO_DEPTH);
-    jt_text(x, y + 96,  JT_COL_GREY,   JT_COL_BLACK, "Name:");
+    jt_text(x, y + 72,  JT_COL_GREY,   JT_COL_BLACK, "Undo: %d Redo: %d",
+            canvas.undo_count, canvas.redo_count);
+    jt_text(x, y + 96,  JT_COL_GREY,   JT_COL_BLACK, "Editing:");
     jt_text(x, y + 120, JT_COL_CYAN,   JT_COL_BLACK, "%s",
-            canvas.description[0] ? canvas.description : "(none)");
+            (edit_source.valid && edit_source.name[0])
+                ? edit_source.name : "(new icon)");
 
     int cx, cy, arg;
     region_t r = region_at(jt_cursor.x, jt_cursor.y, &cx, &cy, &arg);
@@ -964,38 +1109,30 @@ static void draw_picker(void)
     fill_rect(x, y, 2, h, JT_COL_YELLOW);
     fill_rect(x + w - 2, y, 2, h, JT_COL_YELLOW);
 
-    if (save_stage == SAVE_PICK_VMU) {
-        jt_text(x + 12, y + 10, JT_COL_YELLOW, JT_COL_BLACK, "SAVE - SELECT VMU");
-        for (int i = 0; i < apply_target_count; i++) {
-            uint16_t fg = (i == picker_idx) ? JT_COL_YELLOW : JT_COL_WHITE;
-            const char *m = (i == picker_idx) ? ">" : " ";
-            jt_text(x + 16, y + 48 + i * 28, fg, JT_COL_BLACK,
-                    "%s Port %c, Slot %d",
-                    m, 'A' + apply_targets[i].port,
-                    apply_targets[i].slot + 1);
-        }
-        jt_text(x + 12, y + 190, JT_COL_GREY, JT_COL_BLACK,
-                "A: next    B: cancel");
-    } else { /* SAVE_PICK_ACTION */
-        jt_text(x + 12, y + 10, JT_COL_YELLOW, JT_COL_BLACK,
-                "SAVE TO VMU %c%d", 'A' + save_vmu_port, save_vmu_slot + 1);
-        const char *opts[2] = {
-            "Apply as current icon",
-            "Store in icon library",
-        };
-        const char *sub[2] = {
-            "set the VMU's BIOS icon",
-            "add to VMUICONS archive",
-        };
-        for (int i = 0; i < 2; i++) {
-            uint16_t fg = (i == picker_idx) ? JT_COL_YELLOW : JT_COL_WHITE;
-            const char *m = (i == picker_idx) ? ">" : " ";
-            jt_text(x + 16, y + 50 + i * 56, fg, JT_COL_BLACK, "%s %s", m, opts[i]);
-            jt_text(x + 32, y + 74 + i * 56, JT_COL_GREY, JT_COL_BLACK, "%s", sub[i]);
-        }
-        jt_text(x + 12, y + 190, JT_COL_GREY, JT_COL_BLACK,
-                "A: select    B: back");
+    jt_text(x + 12, y + 10, JT_COL_YELLOW, JT_COL_BLACK,
+            (save_kind == SK_APPLY) ? "APPLY TO VMU - SELECT"
+                                    : "SAVE AS - SELECT VMU");
+    jt_text(x + 12, y + 34, JT_COL_GREY, JT_COL_BLACK,
+            (save_kind == SK_APPLY) ? "set the VMU's current icon"
+                                    : "add a new icon library entry");
+    for (int row = 0; row < PICKER_VISIBLE &&
+                      picker_scroll + row < apply_target_count; row++) {
+        int i = picker_scroll + row;
+        uint16_t fg = (i == picker_idx) ? JT_COL_YELLOW : JT_COL_WHITE;
+        const char *m = (i == picker_idx) ? ">" : " ";
+        jt_text(x + 16, y + 64 + row * 28, fg, JT_COL_BLACK,
+                "%s Port %c, Slot %d",
+                m, 'A' + apply_targets[i].port,
+                apply_targets[i].slot + 1);
     }
+    /* Up/down arrows when the target list scrolls past the window. */
+    if (picker_scroll > 0)
+        jt_text(x + w - 28, y + 64, JT_COL_GREY, JT_COL_BLACK, "^");
+    if (picker_scroll + PICKER_VISIBLE < apply_target_count)
+        jt_text(x + w - 28, y + 64 + (PICKER_VISIBLE - 1) * 28,
+                JT_COL_GREY, JT_COL_BLACK, "v");
+    jt_text(x + 12, y + 190, JT_COL_GREY, JT_COL_BLACK,
+            "A: select    B: cancel");
 }
 
 static bool any_modal_visible(void)
@@ -1029,7 +1166,7 @@ static void editor_draw(void)
                          "%s", apply_result_text);
     } else {
         jt_text_centered(404, JT_COL_GREY, JT_COL_BLACK,
-                         "A primary  B secondary  Y tool  D-pad move");
+                         "A/B paint  Y tool  L/R undo/redo  D-pad move");
     }
     jt_text_centered(428, JT_COL_GREEN, JT_COL_BLACK,
                      "Start: options menu");

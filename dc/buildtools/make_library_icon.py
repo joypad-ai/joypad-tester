@@ -51,7 +51,7 @@ def main():
 
     palette = data[PALETTE_OFF:PALETTE_OFF + PALETTE_LEN]
     bitmap  = data[BITMAP_OFF:BITMAP_OFF + BITMAP_LEN]
-    full    = data            # whole 1024-byte ICONDATA_VMS blob
+    full    = data            # whole 1024-byte ICONDATA_VMS blob, verbatim
 
     description = data[0:16].rstrip(b"\x00 ").decode("ascii", errors="replace")
 

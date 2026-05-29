@@ -67,6 +67,12 @@ typedef struct {
     jt_canvas_snapshot_t undo[JT_UNDO_DEPTH];
     int undo_head;
     int undo_count;
+
+    /* Redo ring. Undo stashes the pre-undo state here so it can be
+     * re-applied; any fresh edit (push_undo) clears it. */
+    jt_canvas_snapshot_t redo[JT_UNDO_DEPTH];
+    int redo_head;
+    int redo_count;
 } jt_canvas_t;
 
 /* Initialize with the 16-color default palette and a blank canvas. */
@@ -80,6 +86,7 @@ void jt_canvas_to_icon  (const jt_canvas_t *c, jt_icon_t *icon);
  * action of a stroke; subsequent same-stroke pixels don't push more. */
 void jt_canvas_push_undo(jt_canvas_t *c);
 bool jt_canvas_undo(jt_canvas_t *c);
+bool jt_canvas_redo(jt_canvas_t *c);
 
 /* Single-pixel paint (color layer). Coordinates are canvas-space
  * (0..31). Out-of-range coords are silently ignored. */

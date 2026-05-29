@@ -112,17 +112,21 @@ jt_apply_result_t jt_apply_icondata(const jt_icon_t *icon,
 
 /* ---- VMU LCD helpers ---- */
 
-/* 32x32 mono icon (MSB-first within byte, row-major) -> 48x32 XBM
- * (LSB-first within byte) with the icon centered (8px pad each side). */
-static void mono32_to_lcd_xbm(const uint8_t *mono, char out[48 * 32 / 8])
+/* 32x32 mono icon (MSB-first, row-major) -> the VMU LCD's native 48x32
+ * bitmap: icon centered (8px pad each side), MSB-first per byte, rotated
+ * 180 deg. This matches what vmu_draw_lcd expects -- the XBM helper we
+ * used before silently produced garbage from packed bytes, leaving the
+ * LCD blank on hardware (same bug the tester's LCD mirror hit). */
+static void mono32_to_lcd_native(const uint8_t *mono, uint8_t out[48 * 32 / 8])
 {
     memset(out, 0, 48 * 32 / 8);
     for (int r = 0; r < 32; r++) {
         for (int c = 0; c < 32; c++) {
             int p = r * 32 + c;
             if (!((mono[p / 8] >> (7 - (p % 8))) & 1)) continue;
-            int x = 8 + c, y = r;
-            out[y * 6 + (x / 8)] |= (char)(1 << (x % 8));
+            int x = 8 + c, y = r;            /* upright position in 48x32 */
+            int dx = 47 - x, dy = 31 - y;    /* 180-deg rotate to native */
+            out[dy * 6 + (dx / 8)] |= (uint8_t)(0x80 >> (dx % 8));
         }
     }
 }
@@ -132,9 +136,9 @@ int jt_vmu_show_mono_bits(int port_idx, int slot_idx, const uint8_t *mono_bits)
     maple_device_t *dev = maple_enum_dev(port_idx, slot_idx + 1);
     if (!dev || !dev->valid) return -1;
     if (!(dev->info.functions & MAPLE_FUNC_LCD)) return -1;
-    char xbm[48 * 32 / 8];
-    mono32_to_lcd_xbm(mono_bits, xbm);
-    return vmu_draw_lcd_xbm(dev, xbm);
+    uint8_t native[48 * 32 / 8];
+    mono32_to_lcd_native(mono_bits, native);
+    return vmu_draw_lcd(dev, native);
 }
 
 int jt_vmu_ensure_icondata(int port_idx, int slot_idx)
@@ -162,16 +166,16 @@ int jt_vmu_show_stored_icon(int port_idx, int slot_idx)
     maple_device_t *dev = maple_enum_dev(port_idx, slot_idx + 1);
     if (!dev || !dev->valid) return -1;
     if (!(dev->info.functions & MAPLE_FUNC_LCD)) return -1;
-    char xbm[48 * 32 / 8];
+    uint8_t native[48 * 32 / 8];
     void *raw = NULL;
     int   sz = 0;
     if (vmufs_read(dev, ICONDATA_FILENAME, &raw, &sz) == 0 && raw) {
         jt_icon_t icon;
-        if (jt_vms_decode_icondata(raw, sz, &icon)) mono32_to_lcd_xbm(icon.mono_bits, xbm);
-        else memset(xbm, 0, sizeof(xbm));
+        if (jt_vms_decode_icondata(raw, sz, &icon)) mono32_to_lcd_native(icon.mono_bits, native);
+        else memset(native, 0, sizeof(native));
         free(raw);
     } else {
-        memset(xbm, 0, sizeof(xbm));
+        memset(native, 0, sizeof(native));
     }
-    return vmu_draw_lcd_xbm(dev, xbm);
+    return vmu_draw_lcd(dev, native);
 }

@@ -150,16 +150,18 @@ bool jt_vms_extract_save_icon(const uint8_t *in, size_t size,
         icon->color_indices[i + 1] = byte & 0x0F;
     }
 
-    /* Derive a mono representation from luminance, so the editor's
-     * mono pane shows something meaningful when an extracted color
-     * icon gets loaded. Threshold at mid-grey. */
+    /* Generic saves carry no mono icon, so derive one from the color by
+     * luminance, matching the web maker's color->mono conversion exactly
+     * (dreamcast-icon-maker app.js processMonoImage: Rec.601 luma, and
+     * brightness <= 64 -> "on"/black ink). Dark pixels become the ink;
+     * alpha=0 is treated as off. */
     memset(icon->mono_bits, 0, sizeof(icon->mono_bits));
     for (int p = 0; p < JT_CANVAS_W * JT_CANVAS_H; p++) {
         uint8_t r, g, b, a;
         jt_palette_unpack(icon->palette[icon->color_indices[p]], &r, &g, &b, &a);
-        /* Standard luma weights (Rec. 601). Treat alpha=0 as off. */
+        /* Rec. 601 luma weights -- same as the web maker. */
         unsigned luma = (unsigned)(r * 299 + g * 587 + b * 114) / 1000u;
-        if (a > 0 && luma < 128) {
+        if (a > 0 && luma <= 64) {
             icon->mono_bits[p / 8] |= (uint8_t)(1u << (7 - (p % 8)));
         }
     }

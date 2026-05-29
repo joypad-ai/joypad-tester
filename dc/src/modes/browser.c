@@ -117,6 +117,7 @@ static int save_sel = 0;
 static int save_scroll = 0;
 static int vmu_scroll = 0;          /* top row of the VMU list window */
 #define VMU_VISIBLE 6               /* VMU rows that fit above the footer */
+static uint32_t last_vmu_sig = 0;   /* VMU presence bitmask for hotplug detect */
 
 /* Options view selection. */
 static int opt_sel = 0;
@@ -133,16 +134,48 @@ static unsigned status_frames = 0;
 static uint32_t aggregate_pad_buttons(void);   /* forward decl */
 static void fill_rect(int x, int y, int w, int h, uint16_t color);
 static void commit_staged_options(void);       /* defined with the options view */
+static uint32_t vmu_presence_sig(void);         /* VMU hotplug bitmask */
+static void refresh(void);                       /* scan connected VMUs */
+static void push_icons_to_vmus(void);            /* mirror each VMU's icon to its LCD */
 
 /* Editor handoff. */
 static jt_icon_t pending_to_editor;
 static bool      pending_pickup = false;
+
+/* Library source of the pending icon. When the editor loads an icon that
+ * came from a specific library entry, "Save" overwrites that entry in
+ * place; a fresh/seeded canvas has no source, so "Save" becomes "Save As".
+ * The plain push clears this — only _src records a source. */
+static struct {
+    bool valid;
+    int  port, slot, lib_index;
+    char name[17];
+} pending_src;
 
 void jt_browser_push_to_editor(const jt_icon_t *icon)
 {
     if (!icon) return;
     memcpy(&pending_to_editor, icon, sizeof(pending_to_editor));
     pending_pickup = true;
+    pending_src.valid = false;   /* plain push => no library source */
+}
+
+void jt_browser_push_to_editor_src(const jt_icon_t *icon,
+                                   int port, int slot, int lib_index,
+                                   const char *name)
+{
+    if (!icon) return;
+    memcpy(&pending_to_editor, icon, sizeof(pending_to_editor));
+    pending_pickup = true;
+    pending_src.valid = true;
+    pending_src.port = port;
+    pending_src.slot = slot;
+    pending_src.lib_index = lib_index;
+    pending_src.name[0] = '\0';
+    if (name) {
+        strncpy(pending_src.name, name, sizeof(pending_src.name) - 1);
+        pending_src.name[sizeof(pending_src.name) - 1] = '\0';
+    }
 }
 
 bool jt_browser_consume_pending(jt_icon_t *out)
@@ -150,6 +183,21 @@ bool jt_browser_consume_pending(jt_icon_t *out)
     if (!pending_pickup) return false;
     *out = pending_to_editor;
     pending_pickup = false;
+    return true;
+}
+
+bool jt_browser_consume_source(int *port, int *slot, int *lib_index,
+                               char *name_out, int name_cap)
+{
+    if (!pending_src.valid) return false;
+    if (port)      *port = pending_src.port;
+    if (slot)      *slot = pending_src.slot;
+    if (lib_index) *lib_index = pending_src.lib_index;
+    if (name_out && name_cap > 0) {
+        strncpy(name_out, pending_src.name, name_cap - 1);
+        name_out[name_cap - 1] = '\0';
+    }
+    pending_src.valid = false;
     return true;
 }
 
@@ -201,14 +249,20 @@ static void sanitize_text(char *dst, const uint8_t *src, int len)
 
 static void browser_enter(void)
 {
-    needs_refresh = true;
     view = VIEW_VMUS;
-    vmu_sel = 0;
     save_sel = 0;
     save_scroll = 0;
-    vmu_scroll = 0;
     opt_sel = 0;
     last_btns = aggregate_pad_buttons();
+    last_vmu_sig = vmu_presence_sig();
+    /* Scan now (with the busy overlay) so the first drawn frame shows the
+     * real list or a true "no VMU" result -- not a premature empty screen
+     * while a deferred refresh waits out the options-menu input lock. */
+    jt_show_busy("Reading VMU...");
+    refresh();
+    push_icons_to_vmus();
+    vmu_sel = 0;
+    vmu_scroll = 0;
 }
 
 static void browser_leave(void) { /* nothing */ }
@@ -217,6 +271,10 @@ static void browser_leave(void) { /* nothing */ }
  * and aggregate all save dirents into entries[]. */
 static void refresh(void)
 {
+    /* Remember the selected card so a re-scan (e.g. hotplug reordering
+     * the list) keeps the cursor on the same physical VMU. */
+    int sel_port = (vmu_sel >= 0 && vmu_sel < vmu_count) ? vmus[vmu_sel].port : -1;
+    int sel_slot = (vmu_sel >= 0 && vmu_sel < vmu_count) ? vmus[vmu_sel].slot : -1;
     vmu_count = 0;
     entry_count = 0;
 
@@ -249,69 +307,27 @@ static void refresh(void)
                 v->icon_shape = (uint8_t)root.icon_shape;
             }
 
-            /* BIOS menu icon (ICONDATA_VMS). */
-            void *raw = NULL;
-            int   sz = 0;
-            if (vmufs_read(dev, "ICONDATA_VMS", &raw, &sz) == 0 && raw) {
-                v->has_icondata = true;
-                if (jt_vms_decode_icondata(raw, sz, &v->bios_icon)) {
-                    v->bios_icon_valid = true;
-                    v->real_mode = v->bios_icon.real_mode_flag;
-                }
-                free(raw);
-            }
-
-            /* Saves on this VMU. */
+            /* One directory read per VMU: count saves and grab just the
+             * BIOS menu icon (ICONDATA_VMS). Per-save icons/name/desc are
+             * NOT read here -- decoding every file on every card up front
+             * was the slow part. They're loaded on demand for the one VMU
+             * you open (load_selected_vmu_saves). */
             vmu_dir_t *dirents = NULL;
             int        dcount  = 0;
             if (vmufs_readdir(dev, &dirents, &dcount) == 0) {
                 for (int i = 0; i < dcount; i++) {
                     if (dirents[i].filetype == 0) continue;
                     v->save_count++;
-                    if (entry_count >= MAX_ENTRIES) continue;
-
-                    browser_entry_t *e = &entries[entry_count++];
-                    e->port = p;
-                    e->slot = s;
-                    memcpy(e->filename, dirents[i].filename, 12);
-                    e->filename[12] = '\0';
-                    e->blocks = dirents[i].filesize;
-                    e->icon_valid = false;
-                    e->frame_count = 0;
-                    e->anim_speed = 0;
-                    e->name[0] = e->description[0] = '\0';
-
-                    void *fraw = NULL;
-                    int   fsz  = 0;
-                    if (vmufs_read_dirent(dev, &dirents[i], &fraw, &fsz) == 0 && fraw) {
-                        const uint8_t *bytes = (const uint8_t *)fraw;
-                        bool is_icondata = (memcmp(e->filename, "ICONDATA_VMS", 12) == 0);
-                        /* VMS header text lives at hdroff blocks in; 0x00 is
-                         * the 16-char name, 0x10 the 32-char description.
-                         * ICONDATA_VMS reuses 0x10 for binary offsets, so it
-                         * only has the name. */
-                        size_t hb = (size_t)dirents[i].hdroff * 512;
-                        if ((size_t)fsz >= hb + 0x10)
-                            sanitize_text(e->name, bytes + hb + 0x00, 16);
-                        if (!is_icondata && (size_t)fsz >= hb + 0x30)
-                            sanitize_text(e->description, bytes + hb + 0x10, 32);
-                        if (is_icondata) {
-                            if (jt_vms_decode_icondata(bytes, fsz, &e->frames[0])) {
-                                e->icon_valid = true;
-                                e->frame_count = 1;
+                    if (memcmp(dirents[i].filename, "ICONDATA_VMS", 12) == 0) {
+                        void *raw = NULL; int sz = 0;
+                        if (vmufs_read_dirent(dev, &dirents[i], &raw, &sz) == 0 && raw) {
+                            v->has_icondata = true;
+                            if (jt_vms_decode_icondata(raw, sz, &v->bios_icon)) {
+                                v->bios_icon_valid = true;
+                                v->real_mode = v->bios_icon.real_mode_flag;
                             }
-                        } else {
-                            unsigned n = jt_vms_save_icon_count(bytes, fsz);
-                            if (n > MAX_FRAMES) n = MAX_FRAMES;
-                            for (unsigned f = 0; f < n; f++) {
-                                if (jt_vms_extract_save_icon(bytes, fsz, f, &e->frames[f]))
-                                    e->frame_count++;
-                            }
-                            if (e->frame_count > 0) e->icon_valid = true;
-                            if (fsz >= 0x44)
-                                e->anim_speed = (uint16_t)(bytes[0x42] | (bytes[0x43] << 8));
+                            free(raw);
                         }
-                        free(fraw);
                     }
                 }
                 free(dirents);
@@ -319,8 +335,75 @@ static void refresh(void)
         }
     }
 
-    if (vmu_sel >= vmu_count) vmu_sel = 0;
+    vmu_sel = 0;
+    for (int i = 0; i < vmu_count; i++)
+        if (vmus[i].port == sel_port && vmus[i].slot == sel_slot) { vmu_sel = i; break; }
     needs_refresh = false;
+}
+
+/* Read + decode every save on the currently-selected VMU into entries[].
+ * Deferred from refresh() so opening the File Manager only pays for the
+ * per-VMU directory scan, not a full read of every file on every card. */
+static void load_selected_vmu_saves(void)
+{
+    entry_count = 0;
+    if (vmu_sel < 0 || vmu_sel >= vmu_count) return;
+    vmu_info_t *v = &vmus[vmu_sel];
+    maple_device_t *dev = maple_enum_dev(v->port, v->slot + 1);
+    if (!dev || !dev->valid) return;
+    jt_show_busy("Reading saves...");
+
+    vmu_dir_t *dirents = NULL;
+    int        dcount  = 0;
+    if (vmufs_readdir(dev, &dirents, &dcount) != 0) return;
+    for (int i = 0; i < dcount; i++) {
+        if (dirents[i].filetype == 0) continue;
+        if (entry_count >= MAX_ENTRIES) break;
+
+        browser_entry_t *e = &entries[entry_count++];
+        e->port = v->port;
+        e->slot = v->slot;
+        memcpy(e->filename, dirents[i].filename, 12);
+        e->filename[12] = '\0';
+        e->blocks = dirents[i].filesize;
+        e->icon_valid = false;
+        e->frame_count = 0;
+        e->anim_speed = 0;
+        e->name[0] = e->description[0] = '\0';
+
+        void *fraw = NULL;
+        int   fsz  = 0;
+        if (vmufs_read_dirent(dev, &dirents[i], &fraw, &fsz) == 0 && fraw) {
+            const uint8_t *bytes = (const uint8_t *)fraw;
+            bool is_icondata = (memcmp(e->filename, "ICONDATA_VMS", 12) == 0);
+            /* VMS header text at hdroff blocks in: 0x00 = 16-char name,
+             * 0x10 = 32-char description (ICONDATA reuses 0x10 for binary
+             * offsets, so it only has a name). */
+            size_t hb = (size_t)dirents[i].hdroff * 512;
+            if ((size_t)fsz >= hb + 0x10)
+                sanitize_text(e->name, bytes + hb + 0x00, 16);
+            if (!is_icondata && (size_t)fsz >= hb + 0x30)
+                sanitize_text(e->description, bytes + hb + 0x10, 32);
+            if (is_icondata) {
+                if (jt_vms_decode_icondata(bytes, fsz, &e->frames[0])) {
+                    e->icon_valid = true;
+                    e->frame_count = 1;
+                }
+            } else {
+                unsigned n = jt_vms_save_icon_count(bytes, fsz);
+                if (n > MAX_FRAMES) n = MAX_FRAMES;
+                for (unsigned f = 0; f < n; f++) {
+                    if (jt_vms_extract_save_icon(bytes, fsz, f, &e->frames[f]))
+                        e->frame_count++;
+                }
+                if (e->frame_count > 0) e->icon_valid = true;
+                if (fsz >= 0x44)
+                    e->anim_speed = (uint16_t)(bytes[0x42] | (bytes[0x43] << 8));
+            }
+            free(fraw);
+        }
+    }
+    free(dirents);
 }
 
 /* Build the filtered save-index list for the currently-selected VMU. */
@@ -469,13 +552,31 @@ static void remove_custom_icon(void)
 static void build_base_icon(jt_icon_t *out, const vmu_info_t *v)
 {
     if (v->bios_icon_valid) { *out = v->bios_icon; return; }
-    jt_canvas_t tmp;
+    /* static, NOT on the stack: jt_canvas_t is ~75KB (two undo/redo
+     * snapshot rings), which overflows the thread stack on real hardware
+     * (Flycast tolerates it, hence "works in emu, freezes on console").
+     * build_base_icon isn't re-entrant, so a shared scratch canvas is fine. */
+    static jt_canvas_t tmp;
     jt_canvas_init(&tmp);
     jt_canvas_to_icon(&tmp, out);       /* default palette, blank canvas */
     const uint8_t *mono = (v->icon_shape < 124)
                           ? &bios_icons_mono[v->icon_shape * 128]
                           : fallback_vmu_icon_mono;
     memcpy(out->mono_bits, mono, sizeof(out->mono_bits));
+}
+
+/* While browsing the file manager, show each connected VMU its OWN icon on
+ * its physical LCD -- the same image we render as its thumbnail (its
+ * ICONDATA mono, or the BIOS preset shape when it has no custom icon). */
+static void push_icons_to_vmus(void)
+{
+    for (int i = 0; i < vmu_count; i++) {
+        vmu_info_t *v = &vmus[i];
+        if (!jt_ports[v->port].slots[v->slot].has_lcd) continue;
+        jt_icon_t icon;
+        build_base_icon(&icon, v);
+        jt_vmu_show_mono_bits(v->port, v->slot, icon.mono_bits);
+    }
 }
 
 /* Begin "change/set custom icon": stash the editor base, commit staged
@@ -580,7 +681,7 @@ static void update_vmus(uint32_t edges)
     if (edges & CONT_DPAD_DOWN) if (vmu_sel < vmu_count - 1) vmu_sel++;
     if (edges & CONT_X)         needs_refresh = true;
     if (vmu_count > 0) {
-        if (edges & CONT_A) { build_filtered(); view = VIEW_SAVES; }
+        if (edges & CONT_A) { load_selected_vmu_saves(); build_filtered(); view = VIEW_SAVES; }
         if (edges & CONT_Y) { opt_sel = 0; load_staged_from_vmu(); view = VIEW_OPTIONS; }
     }
     /* Keep the selection inside the visible window (scrolls when there
@@ -740,13 +841,39 @@ static void update_icon_actions(uint32_t edges)
     }
 }
 
+/* Bitmask of which (port,slot) currently hold a VMU, from the per-frame
+ * maple poll -- no extra I/O. A change means a card was inserted/removed. */
+static uint32_t vmu_presence_sig(void)
+{
+    uint32_t sig = 0;
+    for (int p = 0; p < JT_NUM_PORTS; p++)
+        for (int s = 0; s < JT_NUM_SLOTS; s++)
+            if (jt_ports[p].slots[s].kind == JT_SLOT_VMU)
+                sig |= 1u << (p * JT_NUM_SLOTS + s);
+    return sig;
+}
+
 static void browser_update(float dt)
 {
     anim_time_s += dt;
+
+    /* Auto-refresh on VMU hotplug -- no need for the user to press X. If
+     * the card we'd drilled into was removed, pop back to the list. */
+    uint32_t sig = vmu_presence_sig();
+    if (sig != last_vmu_sig) {
+        last_vmu_sig = sig;
+        if (view != VIEW_VMUS && vmu_sel >= 0 && vmu_sel < vmu_count) {
+            int vp = vmus[vmu_sel].port, vs = vmus[vmu_sel].slot;
+            if (jt_ports[vp].slots[vs].kind != JT_SLOT_VMU) view = VIEW_VMUS;
+        }
+        needs_refresh = true;
+    }
+
     if (needs_refresh) {
         jt_show_busy("Reading VMU...");
         refresh();
-        if (view == VIEW_SAVES) build_filtered();
+        push_icons_to_vmus();
+        if (view == VIEW_SAVES) { load_selected_vmu_saves(); build_filtered(); }
     }
 
     uint32_t btns = aggregate_pad_buttons();
@@ -815,8 +942,6 @@ static void draw_vmus(void)
              * same one the Dreamcast BIOS file manager renders. */
             draw_preset_icon(10, iy + BORDER, v->icon_shape, 36);
         jt_text(56, y, fg, bg, "Port %c%d", 'A' + v->port, v->slot + 1);
-        jt_text(360, y, v->real_mode ? JT_COL_GREEN : JT_COL_GREY, bg,
-                "3D:%s", v->real_mode ? "on" : "off");
         jt_text(56, y + 24, JT_COL_GREY, bg,
                 "%d saves   %d blks free", v->save_count, v->free_blocks);
     }
@@ -1077,7 +1202,7 @@ static void draw_save_delete_confirm(void)
     if (save_sel < 0 || save_sel >= filtered_count) { view = VIEW_SAVES; return; }
     browser_entry_t *e = &entries[filtered[save_sel]];
 
-    const int x = 140, y = 170, w = 360, h = 140;
+    const int x = 140, y = 170, w = 360, h = 150;
     fill_rect(x, y, w, h, JT_COL_BLACK);
     fill_rect(x, y, w, 2, JT_COL_RED);
     fill_rect(x, y + h - 2, w, 2, JT_COL_RED);
@@ -1086,12 +1211,14 @@ static void draw_save_delete_confirm(void)
 
     jt_text(x + 12, y + 8,  JT_COL_RED,   JT_COL_BLACK, "DELETE SAVE?");
     jt_text(x + 12, y + 40, JT_COL_WHITE, JT_COL_BLACK, "%s", e->filename);
-    jt_text(x + 12, y + 60, JT_COL_GREY,  JT_COL_BLACK,
+    jt_text(x + 12, y + 64, JT_COL_GREY,  JT_COL_BLACK,
             "Port %c%d   %d blocks",
             'A' + e->port, e->slot + 1, e->blocks);
     jt_text(x + 12, y + 88, JT_COL_GREY,  JT_COL_BLACK,
             "This cannot be undone.");
-    jt_text(x + 12, y + h - 24, JT_COL_GREY, JT_COL_BLACK,
+    /* Footer sits a full glyph height (24px) + margin above the bottom
+     * border so its opaque bfont cells don't paint over the frame. */
+    jt_text(x + 12, y + h - 30, JT_COL_GREY, JT_COL_BLACK,
             "A: yes, delete    B: cancel");
 }
 

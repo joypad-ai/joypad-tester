@@ -107,8 +107,14 @@ int main(int argc, char **argv)
     jt_screensaver_init();
 
     /* Clear the boot buffer so the first visible frame isn't garbage.
+     * Routed through begin/end_frame so the clear targets the correct
+     * buffer: in 240p the draw target is the 640x480 offscreen, NOT the
+     * real 320x240 framebuffer -- clearing 640x480 straight into the
+     * smaller fb overflowed VRAM and corrupted the display on hardware.
      * The render loop clears every frame from here on. */
+    jt_video_begin_frame();
     clear_framebuffer();
+    jt_video_end_frame();
 
     /* Enter the default mode. */
     if (mode_table[jt_current_mode]->enter) {
@@ -153,10 +159,12 @@ int main(int argc, char **argv)
          * outgoing mode's update completes cleanly. */
         apply_mode_switch();
 
-        /* Double-buffered render: every frame draws a FULL screen to the
-         * hidden back buffer, then vid_flip() swaps it in at vblank.
-         * vram_s already points at the back buffer (vid_flip repointed
-         * it last frame). Clear it first since it holds a stale frame. */
+        /* Double-buffered render: every frame draws a FULL 640x480 screen,
+         * then it's presented at vblank. begin/end_frame wrap the draw so
+         * the 240p path can redirect drawing to an offscreen buffer and
+         * box-average it down to the real 320x240 framebuffer; in 480i/VGA
+         * they just flip. Clear first since the target holds a stale frame. */
+        jt_video_begin_frame();
         clear_framebuffer();
 
         if (jt_screensaver_active()) {
@@ -170,11 +178,9 @@ int main(int argc, char **argv)
             }
         }
 
-        /* Display this buffer at the next vblank and repoint vram_s at
-         * the next hidden buffer. vid_waitvbl paces to the refresh and
-         * ensures the flip latched before we draw the next frame. */
-        vid_flip(-1);
-        vid_waitvbl();
+        /* Present at the next vblank (downscaling first in 240p) and
+         * repoint vram_s at the next hidden buffer. */
+        jt_video_end_frame();
     }
 
     return 0;

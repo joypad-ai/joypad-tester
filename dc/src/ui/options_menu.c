@@ -7,6 +7,7 @@
  * list and asks main.c for a mode switch when the user confirms.
  */
 #include <dc/maple/controller.h>
+#include <arch/arch.h>
 
 #include "options_menu.h"
 #include "bfont_util.h"
@@ -23,6 +24,10 @@
 #define MENU_BOX_Y 110
 #define MENU_BOX_W 380
 #define MENU_BOX_H 260
+
+/* The menu lists the modes plus a trailing "Exit to BIOS" action. */
+#define MENU_ITEM_COUNT (JT_MODE_COUNT + 1)
+#define MENU_EXIT_ITEM  JT_MODE_COUNT
 
 static bool     visible = false;
 static int      hover   = 0;
@@ -157,10 +162,10 @@ void jt_options_menu_update(float dt)
      * Start in Flycast's controller emulation). B cancels and closes
      * without picking. */
     if (any_pad_pressed(CONT_DPAD_DOWN, &last_dpad_down)) {
-        hover = (hover + 1) % JT_MODE_COUNT;
+        hover = (hover + 1) % MENU_ITEM_COUNT;
     }
     if (any_pad_pressed(CONT_DPAD_UP, &last_dpad_up)) {
-        hover = (hover + JT_MODE_COUNT - 1) % JT_MODE_COUNT;
+        hover = (hover + MENU_ITEM_COUNT - 1) % MENU_ITEM_COUNT;
     }
     /* A confirms; B cancels. Start is intentionally NOT a confirm
      * key — it's the opener (alone in non-tester modes, Start+Down
@@ -173,6 +178,9 @@ void jt_options_menu_update(float dt)
     (void)any_pad_pressed(CONT_START, &last_start);
     if (open_cooldown == 0) {
         if (a_edge) {
+            if (hover == MENU_EXIT_ITEM) {
+                arch_menu();   /* return to the Dreamcast BIOS menu (no return) */
+            }
             jt_request_mode((jt_mode_id_t)hover);
             visible = false;
         }
@@ -210,11 +218,12 @@ void jt_options_menu_draw(void)
     fill_rect(x + w - 2, y, 2, h, JT_COL_YELLOW);
 
     jt_text_centered(y + 6, JT_COL_YELLOW, JT_COL_BLACK, "-- OPTIONS --");
-    for (int i = 0; i < JT_MODE_COUNT; i++) {
+    for (int i = 0; i < MENU_ITEM_COUNT; i++) {
         uint16_t fg = (i == hover) ? JT_COL_YELLOW : JT_COL_WHITE;
         const char *marker = (i == hover) ? ">" : " ";
+        const char *label = (i == MENU_EXIT_ITEM) ? "Exit to BIOS" : mode_names[i];
         jt_text(x + 16, y + 40 + i * 32, fg, JT_COL_BLACK,
-                "%s %s", marker, mode_names[i]);
+                "%s %s", marker, label);
     }
     jt_text(x + 16, y + h - 28, JT_COL_GREY, JT_COL_BLACK,
             "A: confirm    B: cancel");
