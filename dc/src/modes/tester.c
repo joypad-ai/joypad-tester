@@ -36,12 +36,11 @@ static char lcd_last[JT_NUM_PORTS][48 * 32 / 8];
 static bool lcd_last_valid[JT_NUM_PORTS];
 static int  lcd_cooldown[JT_NUM_PORTS];
 
-/* Per-port/slot rumble pacing. Real Purupuru packs need each effect
- * packet to be left alone long enough for the motor to actually spin
- * up; sending one every frame (60Hz) kept resetting the envelope and
- * the motor never moved. Refire only every RUMBLE_REPEAT_FRAMES. */
-#define RUMBLE_REPEAT_FRAMES 30   /* ~0.5s @ 60fps -- matches Basic Thud */
-static int rumble_cooldown[JT_NUM_PORTS][JT_NUM_SLOTS];
+/* Per-port/slot rumble state. We use continuous-mode rumble (effect.cont
+ * = 1) and toggle it on A's rising/falling edge: a one-shot envelope
+ * refired every N frames only feels like faint pulses on a real pack,
+ * whereas cont=1 lets the motor spin up and stay up for the whole hold. */
+static bool rumble_on[JT_NUM_PORTS][JT_NUM_SLOTS];
 
 static void tester_enter(void)
 {
@@ -184,16 +183,30 @@ static void actuate_rumble(int port_idx, int slot_idx)
     maple_device_t *dev = maple_enum_dev(port_idx, slot_idx + 1);
     if (!dev || !dev->valid) return;
     if (!(dev->info.functions & MAPLE_FUNC_PURUPURU)) return;
-    /* "Basic Thud" envelope from KOS's rumble example: short ~0.5s jolt
-     * the motor actually has time to spin up. Old values (freq=0x20,
-     * inc=0x20) plus 60Hz refire kept restarting the envelope and the
-     * real pack never moved -- worked in emu only because Flycast
-     * triggers an instant pulse per packet regardless of envelope. */
+    /* Continuous max-intensity rumble: cont=1 tells the pack to keep
+     * vibrating until we send a stop. Sent once on A's rising edge -- a
+     * one-shot envelope refired every frame just kept restarting and the
+     * motor never moved on real hardware. */
     purupuru_effect_t effect = { .raw = 0 };
+    effect.cont  = 1;       /* sustain until stopped */
     effect.motor = 1;       /* select motor 1 (required nonzero) */
     effect.fpow  = 7;       /* forward intensity (0-7), max */
     effect.freq  = 26;      /* vibration frequency (4..59) */
-    effect.inc   = 1;       /* inclination period -- short jolt */
+    effect.inc   = 1;       /* inclination period */
+    purupuru_rumble(dev, &effect);
+}
+
+/* Stop a continuous rumble started by actuate_rumble. motor=0 errors per
+ * the KOS docs, so we keep motor=1 and zero the intensity, which the pack
+ * reads as "stop vibrating". */
+static void stop_rumble(int port_idx, int slot_idx)
+{
+    maple_device_t *dev = maple_enum_dev(port_idx, slot_idx + 1);
+    if (!dev || !dev->valid) return;
+    if (!(dev->info.functions & MAPLE_FUNC_PURUPURU)) return;
+    purupuru_effect_t effect = { .raw = 0 };
+    effect.motor = 1;
+    effect.fpow  = 0;
     purupuru_rumble(dev, &effect);
 }
 
@@ -230,19 +243,18 @@ static void tester_update(float dt)
             slot->lcd_test_active = false;
             slot->clock_test_active = false;
 
-            if (slot->kind == JT_SLOT_PURUPURU && (btns & CONT_A)) {
-                /* Refire on the cadence the envelope expects; mark the
-                 * slot as active every frame so the UI label stays lit
-                 * even between actual packets. */
-                if (rumble_cooldown[p][s] == 0) {
+            if (slot->kind == JT_SLOT_PURUPURU) {
+                /* Continuous rumble: start on A's rising edge, stop on
+                 * the falling edge. One packet per transition. */
+                bool want = (btns & CONT_A) != 0;
+                if (want && !rumble_on[p][s]) {
                     actuate_rumble(p, s);
-                    rumble_cooldown[p][s] = RUMBLE_REPEAT_FRAMES;
-                } else {
-                    rumble_cooldown[p][s]--;
+                    rumble_on[p][s] = true;
+                } else if (!want && rumble_on[p][s]) {
+                    stop_rumble(p, s);
+                    rumble_on[p][s] = false;
                 }
-                slot->rumble_active = true;
-            } else if (slot->kind == JT_SLOT_PURUPURU) {
-                rumble_cooldown[p][s] = 0;   /* ready to fire immediately on next press */
+                slot->rumble_active = want;
             }
             /* Slot 1 (index 0) VMU continuously mirrors this controller's
              * live button state onto its LCD -- no hold needed. */
