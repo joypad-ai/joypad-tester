@@ -579,6 +579,26 @@ static void push_icons_to_vmus(void)
     }
 }
 
+/* Live LCD preview while the user navigates the icon-shape selector or
+ * deletes a custom icon. Shape >= 124 falls back to our bundled icon. */
+static void push_preset_to_vmu_lcd(int port, int slot, uint8_t shape)
+{
+    if (!jt_ports[port].slots[slot].has_lcd) return;
+    const uint8_t *mono = (shape < 124) ? &bios_icons_mono[shape * 128]
+                                        : fallback_vmu_icon_mono;
+    jt_vmu_show_mono_bits(port, slot, mono);
+}
+
+/* Push the VMU's committed icon (custom ICONDATA if any, else preset
+ * shape) to its LCD. Used to undo the in-options live preview on cancel. */
+static void push_vmu_committed_to_lcd(const vmu_info_t *v)
+{
+    if (!jt_ports[v->port].slots[v->slot].has_lcd) return;
+    jt_icon_t icon;
+    build_base_icon(&icon, v);
+    jt_vmu_show_mono_bits(v->port, v->slot, icon.mono_bits);
+}
+
 /* Begin "change/set custom icon": stash the editor base, commit staged
  * option edits (so they survive the mode switch), set the apply target,
  * and open the Icon Library to pick -- or, if empty, the editor seeded
@@ -753,7 +773,13 @@ static void update_save_delete_confirm(uint32_t edges)
 
 static void update_options(uint32_t edges)
 {
-    if (edges & CONT_B) { view = VIEW_VMUS; return; }
+    if (edges & CONT_B) {
+        /* Cancel: revert the LCD to the committed icon so any preview
+         * pushed by the icon-shape selector goes away. */
+        push_vmu_committed_to_lcd(&vmus[vmu_sel]);
+        view = VIEW_VMUS;
+        return;
+    }
     if (edges & CONT_DPAD_UP)   if (opt_sel > 0) opt_sel--;
     if (edges & CONT_DPAD_DOWN) if (opt_sel < OPT_COUNT - 1) opt_sel++;
 
@@ -781,6 +807,11 @@ static void update_options(uint32_t edges)
                 if (n < 0)   n = 123;   /* wrap through the 124 shapes */
                 if (n > 123) n = 0;
                 staged_icon_shape = (uint8_t)n;
+                /* Live preview: push the picked shape onto the VMU's LCD
+                 * so the user can see it on the physical card. Reverted
+                 * on B (cancel); persisted on A-elsewhere (commit). */
+                vmu_info_t *v = &vmus[vmu_sel];
+                push_preset_to_vmu_lcd(v->port, v->slot, staged_icon_shape);
                 break;
             }
         }
@@ -834,6 +865,8 @@ static void update_icon_actions(uint32_t edges)
         } else if (action == 1) {         /* Remove */
             commit_staged_options();
             remove_custom_icon();
+            /* Card is now on its preset shape -- mirror that to the LCD. */
+            push_preset_to_vmu_lcd(v->port, v->slot, v->icon_shape);
             view = VIEW_OPTIONS;
         } else {                          /* Back */
             view = VIEW_OPTIONS;
@@ -1060,7 +1093,7 @@ static void draw_options(void)
         int ly = row_y[OPT_CUSTOM_COLOR];
         uint16_t fg = (opt_sel == OPT_CUSTOM_COLOR) ? JT_COL_YELLOW : JT_COL_WHITE;
         jt_text(x + 12, ly, fg, JT_COL_BLACK,
-                "Custom BIOS color:    %s", staged_custom_color ? "ON " : "off");
+                "VMU Color:            %s", staged_custom_color ? "ON " : "off");
     }
 
     /* RGBA sliders. Bar = 16 cells x 14px = 224px wide. Each cell

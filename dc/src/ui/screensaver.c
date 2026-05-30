@@ -22,13 +22,19 @@
 #include "gen_logo.h"
 #include "../ports/ports.h"
 
-/* 30 seconds at 60 fps -- matches the PCE tester's threshold. */
-#define IDLE_FRAMES 1800
+/* 30 seconds of idle before the screensaver kicks in. dt-based so the
+ * threshold doesn't depend on framerate (was IDLE_FRAMES = 30 * 60). */
+#define IDLE_SECONDS 30.0f
 
-static int  idle_counter = 0;
-static bool active = false;
-static int  x, y, dx, dy;
-static int  color_idx = 0;
+static float idle_time = 0.0f;
+static bool  active = false;
+/* Position + velocity are dt-based: x/y in pixels (float so subpixel
+ * accumulation doesn't drop frames at high fps), vx/vy in pixels/sec.
+ * 120 px/s == the original 2 px/frame at 60 fps, but now constant regardless
+ * of the actual frame rate (which can spike on Flycast without throttle
+ * and was making the logo fly across the screen). */
+static float x, y, vx, vy;
+static int   color_idx = 0;
 static int  last_x = -1000;
 static int  last_y = -1000;
 /* Pending-wake flag: set the single frame we deactivate, consumed by
@@ -49,13 +55,13 @@ static const uint16_t cycle[7] = {
 
 void jt_screensaver_init(void)
 {
-    idle_counter = 0;
+    idle_time = 0.0f;
     active = false;
     color_idx = 0;
-    /* Start in the upper-left quadrant with a velocity that puts the
-     * logo on a diagonal trajectory at ~2 px/frame. */
-    x = 64; y = 80;
-    dx = 2;  dy = 2;
+    /* Upper-left start; diagonal at 120 px/s (matches the previous
+     * 2 px/frame at 60 fps). */
+    x = 64.0f; y = 80.0f;
+    vx = 120.0f; vy = 120.0f;
     last_x = -1000;
     last_y = -1000;
 }
@@ -116,38 +122,40 @@ static void blit_logo(int px, int py, uint16_t color)
 
 void jt_screensaver_tick(float dt)
 {
-    (void)dt;
     bool input = any_user_input();
 
     if (input) {
         if (active) {
             active = false;
-            idle_counter = 0;
+            idle_time = 0.0f;
             wake_pending = true;
         }
-        idle_counter = 0;
+        idle_time = 0.0f;
         return;
     }
 
-    idle_counter++;
-    if (!active && idle_counter >= IDLE_FRAMES) {
+    idle_time += dt;
+    if (!active && idle_time >= IDLE_SECONDS) {
         active = true;
+    }
+
+    /* Step + bounce in tick so motion is dt-based: at any frame rate the
+     * logo moves at vx/vy pixels per second instead of vx/vy per frame.
+     * Each wall hit flips the relevant component and advances the cycle
+     * index. The back buffer is cleared every frame by main.c, so the
+     * draw side just blits at the current position. */
+    if (active) {
+        x += vx * dt;
+        y += vy * dt;
+        if (x < 0)                { x = 0;              vx = -vx; color_idx = (color_idx + 1) % 7; }
+        if (x + LOGO_W > 640)     { x = 640 - LOGO_W;   vx = -vx; color_idx = (color_idx + 1) % 7; }
+        if (y < 0)                { y = 0;              vy = -vy; color_idx = (color_idx + 1) % 7; }
+        if (y + LOGO_H > 480)     { y = 480 - LOGO_H;   vy = -vy; color_idx = (color_idx + 1) % 7; }
     }
 }
 
 void jt_screensaver_draw(void)
 {
     if (!active) return;
-
-    /* Step + bounce. Each wall hit flips the relevant component and
-     * advances the cycle index. The back buffer is cleared every frame
-     * by main.c, so we just draw the logo at its new position. */
-    x += dx;
-    y += dy;
-    if (x < 0) { x = 0; dx = -dx; color_idx = (color_idx + 1) % 7; }
-    if (x + LOGO_W > 640) { x = 640 - LOGO_W; dx = -dx; color_idx = (color_idx + 1) % 7; }
-    if (y < 0) { y = 0; dy = -dy; color_idx = (color_idx + 1) % 7; }
-    if (y + LOGO_H > 480) { y = 480 - LOGO_H; dy = -dy; color_idx = (color_idx + 1) % 7; }
-
-    blit_logo(x, y, cycle[color_idx]);
+    blit_logo((int)x, (int)y, cycle[color_idx]);
 }
