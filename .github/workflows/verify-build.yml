@@ -48,7 +48,7 @@ jobs:
             # dc/buildtools/Dockerfile -- see the Build (Dreamcast) step.
             image: ""
             artifacts: |
-              dc/build/joypad-tester-dreamcast.cdi
+              dc/build/joypad_tester_dc_v*.cdi
           - console: n64
             # LibDragon trunk built from source on top of the
             # libdragon toolchain image -- see the Build (N64) step.
