@@ -131,6 +131,26 @@ static void mono32_to_lcd_native(const uint8_t *mono, uint8_t out[48 * 32 / 8])
     }
 }
 
+/* vmu_draw_lcd uses maple_frame_trylock and returns MAPLE_EAGAIN if the
+ * device's frame is still queued from an earlier write. That's fine for
+ * the tester's live 20Hz mirror -- dropping a frame is invisible -- but
+ * back-to-back writes during a mode switch (e.g. tester_leave restoring
+ * a stored icon, then about_enter pushing the joypad logo to the same
+ * VMU one C-call later) silently lose the second write because maple
+ * hasn't polled yet. Retry briefly so guaranteed-delivery callers get a
+ * push that actually lands. Maple polls each vblank (~16ms), so 5 tries
+ * at 10ms covers ~3 poll cycles. */
+static int vmu_draw_lcd_sync(maple_device_t *dev, const void *native)
+{
+    int r;
+    for (int i = 0; i < 5; i++) {
+        r = vmu_draw_lcd(dev, native);
+        if (r != MAPLE_EAGAIN) return r;
+        thd_sleep(10);
+    }
+    return r;
+}
+
 int jt_vmu_show_mono_bits(int port_idx, int slot_idx, const uint8_t *mono_bits)
 {
     maple_device_t *dev = maple_enum_dev(port_idx, slot_idx + 1);
@@ -138,7 +158,7 @@ int jt_vmu_show_mono_bits(int port_idx, int slot_idx, const uint8_t *mono_bits)
     if (!(dev->info.functions & MAPLE_FUNC_LCD)) return -1;
     uint8_t native[48 * 32 / 8];
     mono32_to_lcd_native(mono_bits, native);
-    return vmu_draw_lcd(dev, native);
+    return vmu_draw_lcd_sync(dev, native);
 }
 
 int jt_vmu_ensure_icondata(int port_idx, int slot_idx)
@@ -177,5 +197,5 @@ int jt_vmu_show_stored_icon(int port_idx, int slot_idx)
     } else {
         memset(native, 0, sizeof(native));
     }
-    return vmu_draw_lcd(dev, native);
+    return vmu_draw_lcd_sync(dev, native);
 }
