@@ -1,0 +1,72 @@
+/usr/src/app/src/main.obj: /usr/src/app/src/main.c \
+  /usr/src/nxdk/lib/hal/video.h /usr/src/nxdk/lib/xboxkrnl/xboxkrnl.h \
+  /usr/src/nxdk/lib/xboxkrnl/xboxdef.h \
+  /usr/src/nxdk/lib/xboxkrnl/ntstatus.h \
+  /usr/src/nxdk/lib/pdclib/include/string.h \
+  /usr/src/nxdk/lib/pdclib/include/pdclib/_PDCLIB_lib_ext1.h \
+  /usr/src/nxdk/lib/pdclib/include/pdclib/_PDCLIB_int.h \
+  /usr/src/nxdk/lib/pdclib/platform/xbox/include/pdclib/_PDCLIB_config.h \
+  /usr/src/nxdk/lib/xboxrt/libc_extensions/ctype_ext_.h \
+  /usr/src/nxdk/lib/xboxrt/libc_extensions/errno_ext_.h \
+  /usr/src/nxdk/lib/xboxrt/libc_extensions/locale_ext_.h \
+  /usr/src/nxdk/lib/xboxrt/libc_extensions/stdio_ext_.h \
+  /usr/src/nxdk/lib/xboxrt/libc_extensions/stdlib_ext_.h \
+  /usr/src/nxdk/lib/xboxrt/libc_extensions/string_ext_.h \
+  /usr/src/nxdk/lib/pdclib/include/pdclib/_PDCLIB_aux.h \
+  /usr/src/nxdk/lib/hal/debug.h /usr/src/nxdk/lib/hal/xbox.h \
+  /usr/src/nxdk/lib/winapi/windows.h /usr/src/nxdk/lib/winapi/debugapi.h \
+  /usr/src/nxdk/lib/winapi/windef.h \
+  /usr/src/nxdk/lib/winapi/errhandlingapi.h \
+  /usr/src/nxdk/lib/winapi/winbase.h /usr/src/nxdk/lib/winapi/basetsd.h \
+  /usr/src/nxdk/lib/winapi/minwinbase.h /usr/src/nxdk/lib/winapi/winnt.h \
+  /usr/src/nxdk/lib/xboxrt/vcruntime/excpt.h \
+  /usr/src/nxdk/lib/pdclib/include/stdint.h \
+  /usr/src/nxdk/lib/winapi/fibersapi.h \
+  /usr/src/nxdk/lib/winapi/fileapi.h \
+  /usr/src/nxdk/lib/winapi/handleapi.h \
+  /usr/src/nxdk/lib/winapi/libloaderapi.h \
+  /usr/src/nxdk/lib/winapi/memoryapi.h \
+  /usr/src/nxdk/lib/winapi/processthreadsapi.h \
+  /usr/src/nxdk/lib/winapi/profileapi.h \
+  /usr/src/nxdk/lib/winapi/synchapi.h \
+  /usr/src/nxdk/lib/winapi/sysinfoapi.h \
+  /usr/src/nxdk/lib/winapi/timezoneapi.h \
+  /usr/src/nxdk/lib/winapi/winerror.h
+/usr/src/nxdk/lib/hal/video.h:
+/usr/src/nxdk/lib/xboxkrnl/xboxkrnl.h:
+/usr/src/nxdk/lib/xboxkrnl/xboxdef.h:
+/usr/src/nxdk/lib/xboxkrnl/ntstatus.h:
+/usr/src/nxdk/lib/pdclib/include/string.h:
+/usr/src/nxdk/lib/pdclib/include/pdclib/_PDCLIB_lib_ext1.h:
+/usr/src/nxdk/lib/pdclib/include/pdclib/_PDCLIB_int.h:
+/usr/src/nxdk/lib/pdclib/platform/xbox/include/pdclib/_PDCLIB_config.h:
+/usr/src/nxdk/lib/xboxrt/libc_extensions/ctype_ext_.h:
+/usr/src/nxdk/lib/xboxrt/libc_extensions/errno_ext_.h:
+/usr/src/nxdk/lib/xboxrt/libc_extensions/locale_ext_.h:
+/usr/src/nxdk/lib/xboxrt/libc_extensions/stdio_ext_.h:
+/usr/src/nxdk/lib/xboxrt/libc_extensions/stdlib_ext_.h:
+/usr/src/nxdk/lib/xboxrt/libc_extensions/string_ext_.h:
+/usr/src/nxdk/lib/pdclib/include/pdclib/_PDCLIB_aux.h:
+/usr/src/nxdk/lib/hal/debug.h:
+/usr/src/nxdk/lib/hal/xbox.h:
+/usr/src/nxdk/lib/winapi/windows.h:
+/usr/src/nxdk/lib/winapi/debugapi.h:
+/usr/src/nxdk/lib/winapi/windef.h:
+/usr/src/nxdk/lib/winapi/errhandlingapi.h:
+/usr/src/nxdk/lib/winapi/winbase.h:
+/usr/src/nxdk/lib/winapi/basetsd.h:
+/usr/src/nxdk/lib/winapi/minwinbase.h:
+/usr/src/nxdk/lib/winapi/winnt.h:
+/usr/src/nxdk/lib/xboxrt/vcruntime/excpt.h:
+/usr/src/nxdk/lib/pdclib/include/stdint.h:
+/usr/src/nxdk/lib/winapi/fibersapi.h:
+/usr/src/nxdk/lib/winapi/fileapi.h:
+/usr/src/nxdk/lib/winapi/handleapi.h:
+/usr/src/nxdk/lib/winapi/libloaderapi.h:
+/usr/src/nxdk/lib/winapi/memoryapi.h:
+/usr/src/nxdk/lib/winapi/processthreadsapi.h:
+/usr/src/nxdk/lib/winapi/profileapi.h:
+/usr/src/nxdk/lib/winapi/synchapi.h:
+/usr/src/nxdk/lib/winapi/sysinfoapi.h:
+/usr/src/nxdk/lib/winapi/timezoneapi.h:
+/usr/src/nxdk/lib/winapi/winerror.h:

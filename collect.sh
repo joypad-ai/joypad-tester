@@ -84,5 +84,10 @@ if selected nuon; then
     copy "joypad_tester_nuon_${H}.iso" "$ROOT"/nuon/build/joypad-tester.iso
     copy "joypad_tester_nuon_${H}.run" "$ROOT"/nuon/build/nuon.run
 fi
+if selected xbox; then
+    H=$(rev xbox); XBVER=$(tr -d '[:space:]' < "$ROOT"/xbox/VERSION); \
+        copy "joypad_tester_xbox_${H}.xbe" "$ROOT"/xbox/build/default.xbe; \
+        copy "joypad_tester_xbox_${H}.iso" "$ROOT"/xbox/build/joypad_tester_xbox_v${XBVER}.iso
+fi
 
 echo "Collected into releases/"
