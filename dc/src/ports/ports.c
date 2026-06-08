@@ -22,12 +22,22 @@
 jt_port_state_t jt_ports[JT_NUM_PORTS];
 
 /* VMU block counts come from a maple round-trip that BLOCKS the main
- * thread (~16ms each). Reading every connected VMU in the same frame
- * bursts that cost into a periodic multi-frame hitch -- dropped input
- * and a stuttering screensaver. Instead we refresh just ONE (port,slot)
- * per stride, rotating through them all, so the cost is spread one
- * read-pair at a time. Each VMU still refreshes ~once/second. */
-#define VMU_REFRESH_STRIDE 8
+ * thread (~16ms each); a refresh pair (root + free) stalls the main
+ * loop ~30ms while maple drains. Reading every connected VMU in the
+ * same frame bursts that cost into a periodic multi-frame hitch --
+ * dropped input and a stuttering screensaver. Instead we refresh just
+ * ONE (port,slot) per stride, rotating through them all.
+ *
+ * Block-counts only change on a successful save/delete -- the browser
+ * does its own vmufs_root_read + vmufs_free_blocks on enter, and a
+ * write path that wants an instant refresh can clear slot->block_total
+ * to -1 (the on-detect condition below picks that up next poll). So
+ * the only consumer relying on the periodic refresh is the tester's
+ * "VMU NNN" status label, where a multi-second cadence is fine and
+ * the per-refresh hitch is invisible (~0.6% of frame time at stride
+ * 300 vs ~24% at stride 8 -- the latter was eating ~30ms every ~133ms
+ * and was the reason rapid taps in the tester read as "missed"). */
+#define VMU_REFRESH_STRIDE 300
 static uint32_t poll_counter = 0;
 
 static jt_port_style_t style_from_func(uint32_t func)
