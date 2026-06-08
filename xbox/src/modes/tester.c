@@ -14,6 +14,7 @@
 
 #include <pbkit/pbkit.h>
 #include <stdbool.h>
+#include <stdio.h>
 
 #include "../ports/ports.h"
 
@@ -73,10 +74,24 @@ static void draw_port(int p)
              port->pad.stick_rx, port->pad.stick_ry,
              port->pad.trig_l, port->pad.trig_r);
 
-    /* Expansion slots -- v0.1.0 placeholder until MU detection. */
-    pb_print("  Slot1 [%s]  Slot2 [%s]\n\n",
-             jt_slot_kind_name(port->slots[0].kind),
-             jt_slot_kind_name(port->slots[1].kind));
+    /* Expansion slots. For MUs we show "MU 1234K/8192K" (free / total
+     * KB) so the user can sanity-check both that the slot is detected
+     * and that the FATX read returned the expected total. Empty slots
+     * just show "[----]". */
+    char slot_label[2][24];
+    for (int s = 0; s < 2; s++) {
+        if (port->slots[s].kind == JT_SLOT_MU &&
+            port->slots[s].block_total >= 0) {
+            snprintf(slot_label[s], sizeof(slot_label[s]),
+                     "MU %4uK/%uK",
+                     (unsigned)port->slots[s].block_free,
+                     (unsigned)port->slots[s].block_total);
+        } else {
+            snprintf(slot_label[s], sizeof(slot_label[s]),
+                     "[%s]", jt_slot_kind_name(port->slots[s].kind));
+        }
+    }
+    pb_print("  Slot1 %s   Slot2 %s\n\n", slot_label[0], slot_label[1]);
 }
 
 void jt_tester_draw(void)

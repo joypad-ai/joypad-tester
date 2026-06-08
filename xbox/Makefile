@@ -20,6 +20,7 @@ OUTPUT_DIR := $(CURDIR)/build
 
 SRCS := $(CURDIR)/src/main.c \
         $(CURDIR)/src/ports/ports.c \
+        $(CURDIR)/src/ports/mu.c \
         $(CURDIR)/src/modes/tester.c
 
 NXDK_DIR ?= /usr/src/nxdk

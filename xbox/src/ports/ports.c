@@ -11,6 +11,7 @@
  * v0.1.0 the slot rows just render "EMPTY".
  */
 #include "ports.h"
+#include "mu.h"
 
 #include <SDL.h>
 #include <string.h>
@@ -27,7 +28,14 @@ void jt_ports_init(void)
     memset(jt_ports, 0, sizeof(jt_ports));
     memset(pad_for_port, 0, sizeof(pad_for_port));
     SDL_GameControllerEventState(SDL_ENABLE);
+    jt_mu_init();
 }
+
+/* Frame counter so we re-probe MUs at a sane cadence rather than
+ * every frame -- nxMountDrive on an empty slot is cheap but probing
+ * 8 of them per vblank is still wasted maple-equivalent traffic. */
+static uint32_t poll_counter = 0;
+#define MU_REFRESH_STRIDE 60   /* ~1 second at 60 Hz */
 
 static int port_for_pad(SDL_GameController *pad)
 {
@@ -138,13 +146,34 @@ void jt_ports_poll(void)
             continue;
         }
         poll_pad(p, pad);
-        /* MU / Voice slot detection arrives in a follow-up; v0.1.0
-         * leaves the slot rows blank. */
+
+        /* Memory Units. jt_mu_index_for handles the convention
+         * mapping (port * NUM_SLOTS + slot); jt_mu_get returns NULL
+         * for an out-of-range index and a present=false entry for
+         * an empty slot. Voice / other slot kinds aren't differentiated
+         * yet -- present means "we got a FATX mount", anything else
+         * stays EMPTY. */
         for (int s = 0; s < JT_NUM_SLOTS; s++) {
-            port->slots[s].kind = JT_SLOT_EMPTY;
-            port->slots[s].block_free = port->slots[s].block_total = -1;
+            int mu = jt_mu_index_for(p, s);
+            const jt_mu_info_t *info = (mu >= 0) ? jt_mu_get(mu) : NULL;
+            if (info && info->present) {
+                port->slots[s].kind = JT_SLOT_MU;
+                /* Surface KB as our "block" count -- MUs are small
+                 * enough that KB fits in 4 digits and the tester
+                 * label has room. The block_total field stays as
+                 * total KB so the display can compute used%. */
+                port->slots[s].block_free  = (int16_t)(info->free_kb / 1);
+                port->slots[s].block_total = (int16_t)(info->total_kb / 1);
+                if (info->free_kb  > 32767) port->slots[s].block_free  = 32767;
+                if (info->total_kb > 32767) port->slots[s].block_total = 32767;
+            } else {
+                port->slots[s].kind = JT_SLOT_EMPTY;
+                port->slots[s].block_free = port->slots[s].block_total = -1;
+            }
         }
     }
+
+    if ((++poll_counter % MU_REFRESH_STRIDE) == 0) jt_mu_refresh();
 }
 
 void jt_port_rumble(int port_idx, uint16_t strong, uint16_t weak,
