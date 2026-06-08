@@ -38,6 +38,7 @@ jobs:
             pce)      PRETTY="PC Engine" ;;
             3do)      PRETTY="3DO" ;;
             dc)       PRETTY="Dreamcast" ;;
+            xbox)     PRETTY="Xbox" ;;
             *)        PRETTY="$CONSOLE" ;;
           esac
           echo "console=$CONSOLE" >> "$GITHUB_OUTPUT"
@@ -161,6 +162,21 @@ jobs:
             make
           cp -f joypad-tester.z64 build/joypad-tester.z64
 
+      - name: Build (Xbox)
+        if: needs.parse.outputs.console == 'xbox'
+        run: |
+          # nxdk:latest provides the prebuilt clang/lld/pbkit/SDL2
+          # toolchain. The image's ENTRYPOINT activates nxdk's env
+          # before running our `make`. amd64-only image; CI is
+          # amd64 native so --platform is a no-op.
+          docker run --rm \
+            --platform=linux/amd64 \
+            -v "${{ github.workspace }}":/usr/src/app \
+            -w /usr/src/app/xbox \
+            -u "$(id -u):$(id -g)" \
+            ghcr.io/xboxdev/nxdk:latest \
+            make -j"$(nproc)"
+
       - name: Stage release artifacts (GameCube)
         if: needs.parse.outputs.console == 'gcn'
         working-directory: ${{ needs.parse.outputs.console }}
@@ -273,6 +289,34 @@ jobs:
           VERSION="${{ needs.parse.outputs.version }}"
           mkdir -p _release
           cp build/joypad-tester.z64 "_release/joypad_tester_n64_v${VERSION}.z64"
+          ls -la _release/
+
+      - name: Stage release artifacts (Xbox)
+        if: needs.parse.outputs.console == 'xbox'
+        working-directory: xbox
+        run: |
+          # Two release artifacts:
+          #   joypad_tester_xbox_v<ver>.zip
+          #     "Joypad Tester/default.xbe" folder layout, ready to
+          #     drop onto an Xbox softmod's E:\Games\ or any FTP'd
+          #     HDD path. The folder name shows up in dashboards as
+          #     the app title.
+          #   joypad_tester_xbox_v<ver>.iso
+          #     Bootable XISO for DVD-R burn or softmod ISO loaders
+          #     (e.g. iso-launchers, mxm-style chains). Produced by
+          #     nxdk's extract-xiso during the build.
+          VERSION="${{ needs.parse.outputs.version }}"
+          mkdir -p _release
+          if [ -f build/default.xbe ]; then
+            rm -rf _stage
+            mkdir -p "_stage/Joypad Tester"
+            cp build/default.xbe "_stage/Joypad Tester/default.xbe"
+            (cd _stage && zip -r "../_release/joypad_tester_xbox_v${VERSION}.zip" "Joypad Tester")
+            rm -rf _stage
+          fi
+          if [ -f "build/joypad_tester_xbox_v${VERSION}.iso" ]; then
+            cp "build/joypad_tester_xbox_v${VERSION}.iso" "_release/joypad_tester_xbox_v${VERSION}.iso"
+          fi
           ls -la _release/
 
       - name: Build release body
