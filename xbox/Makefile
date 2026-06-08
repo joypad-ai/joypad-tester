@@ -18,7 +18,15 @@ XBE_TITLE   = Joypad\ Tester
 GEN_XISO    = build/joypad_tester_xbox_v$(VERSION).iso
 OUTPUT_DIR := $(CURDIR)/build
 
-SRCS := $(CURDIR)/src/main.c
+SRCS := $(CURDIR)/src/main.c \
+        $(CURDIR)/src/ports/ports.c \
+        $(CURDIR)/src/modes/tester.c
 
 NXDK_DIR ?= /usr/src/nxdk
+
+# Pull in SDL2 + pbkit. nxdk's Makefile fragments expose these as
+# NXDK_SDL=y / NXDK_CXX=y feature flags; pbkit is unconditional. The
+# sdl_gamecontroller sample does the same.
+NXDK_SDL = y
+
 include $(NXDK_DIR)/Makefile
