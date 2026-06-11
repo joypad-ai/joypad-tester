@@ -10,22 +10,7 @@ device on the daisy chain.
   <img src="assets/screenshot.png" alt="3DO Joypad Tester running in Opera (libretro): PAD/MOUSE/STICK/GUN/ARCADE/KEYB rows on positions 1..6" width="600" />
 </p>
 
-One row per detected pod. Layout:
-
-```
-Joypad Tester - 3DO
-===================
-
-P  TYPE     ID
-1  PAD      80    U . . R . A B C . P . R
-2  MOUSE    49    X-032 Y+069  L . R
-3  STICK    01    . . L . F A . . . P . .
-                  H+000 V-018 D+002
-4  GUN      4D    C 28800  L1  T
-5  ARCADE   C0    .  S1  .  S2  Sv
-6  KEYB     4B    K:02  1C 23 -- --
-                  > hello world_
-```
+One row per detected pod:
 
 | Class      | PBUS ID(s)  | Decoded fields                                |
 |------------|-------------|-----------------------------------------------|
