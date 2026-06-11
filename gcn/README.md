@@ -12,14 +12,6 @@ keyboard.
 </p>
 
 All four SI ports rendered live, simultaneously, with no active-port toggle.
-Each port shows:
-
-```
-Port N  Style: GCN  Pak: None         Rumble: Idle
-Stick: +000,+000 C-Stick: +000,+000 L-Trig:000 R-Trig:000
-A:0 B:0 X:0 Y:0 L:0 R:0 Z:0 Start:0
-D-U:0 D-D:0 D-L:0 D-R:0 C-U:0 C-D:0 C-L:0 C-R:0
-```
 
 | Style    | Source                                     |
 |----------|--------------------------------------------|

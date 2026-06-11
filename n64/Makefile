@@ -78,6 +78,6 @@ endif
 # sitting at the EverDrive menu. Shared helper so other EverDrive
 # consoles can adopt the same `make flash` pattern.
 flash:
-	@../buildtools/flash.sh n64 $(BUILD_DIR)/$(TARGET).z64
+	@buildtools/flash.sh $(BUILD_DIR)/$(TARGET).z64
 
 .PHONY: all clean flash

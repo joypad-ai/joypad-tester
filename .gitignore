@@ -13,5 +13,5 @@ n64/joypad-tester.z64
 # Locally-collected build artifacts (collect.sh)
 releases/
 
-# UNFLoader USB-flash tool cache (buildtools/flash.sh)
-buildtools/.unfloader/
+# UNFLoader USB-flash tool cache (n64/buildtools/flash.sh)
+n64/buildtools/.unfloader/
