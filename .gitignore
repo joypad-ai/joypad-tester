@@ -1,4 +1,8 @@
 .DS_Store
+
+# Private local-only planning / roadmap memory. Never commit.
+.dev/
+
 3do/.portfolio_os/
 3do/.wine-home/
 nuon/.nuon-sdk/
