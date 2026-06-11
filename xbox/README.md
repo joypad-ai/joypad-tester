@@ -12,7 +12,7 @@ on-screen mouse cursor all work on hardware.
 ## What it tests
 
 <p align="center">
-  <em>screenshot.png — placeholder, will land once v1.0 has on-hardware caps</em>
+  <img src="assets/screenshot.png" alt="Joypad Tester — Xbox — controller, S, keyboard, MU on ports 1–4" width="640" />
 </p>
 
 All four controller ports (1–4) rendered live, simultaneously, with no
