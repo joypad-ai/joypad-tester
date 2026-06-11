@@ -34,7 +34,7 @@ A collection of homebrew controller test ROMs across game consoles. Each console
 | Nintendo 64 | released | [`n64/`](n64/) | [MIT](n64/LICENSE.md) |
 | PC Engine | released | [`pce/`](pce/) | [MIT](pce/LICENSE.md) |
 | Xbox | released | [`xbox/`](xbox/) | [MIT](xbox/LICENSE.md) |
-| Dreamcast | beta | [`dc/`](dc/) | [MIT](dc/LICENSE.md) |
+| Dreamcast | released | [`dc/`](dc/) | [MIT](dc/LICENSE.md) |
 | NUON | alpha | [`nuon/`](nuon/) | [MIT](nuon/LICENSE.md) |
 | PlayStation | planned | — | — |
 | PlayStation 2 | planned | — | — |
@@ -49,7 +49,7 @@ boots but core functionality still in progress. *planned* = on the
 roadmap, not started.
 
 Subdirs use short codenames (`3do`, `gba`, `gcn`, `pce`, `dc`, `n64`,
-`nuon`, future `psx` / `xbox` / `ps2` / `nes` / `snes` / `x360` /
+`nuon`, `xbox`, future `psx` / `ps2` / `nes` / `snes` / `x360` /
 `ps3`) matching homebrew-community conventions. Release tags follow the
 same prefix: `<codename>-v<semver>`.
 
