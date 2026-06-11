@@ -165,16 +165,21 @@ jobs:
       - name: Build (Xbox)
         if: needs.parse.outputs.console == 'xbox'
         run: |
-          # nxdk:latest provides the prebuilt clang/lld/pbkit/SDL2
-          # toolchain. The image's ENTRYPOINT activates nxdk's env
-          # before running our `make`. amd64-only image; CI is
-          # amd64 native so --platform is a no-op.
+          # xbox/buildtools/Dockerfile extends nxdk:latest by rebuilding
+          # the SDK with NXDK_USB_ENABLE_MSC / UAC / HID = y so the Mass
+          # Storage, Audio, and HID class drivers are baked in. Without
+          # them the tester can't see Memory Units, the Voice Communicator
+          # / mic, or USB keyboard / mouse on real hardware. amd64-only
+          # image; CI runners are amd64 so --platform is a no-op.
+          docker build --platform=linux/amd64 \
+                       -t joypad-tester-nxdk:release \
+                       xbox/buildtools/
           docker run --rm \
             --platform=linux/amd64 \
             -v "${{ github.workspace }}":/usr/src/app \
             -w /usr/src/app/xbox \
             -u "$(id -u):$(id -g)" \
-            ghcr.io/xboxdev/nxdk:latest \
+            joypad-tester-nxdk:release \
             make -j"$(nproc)"
 
       - name: Stage release artifacts (GameCube)

@@ -16,17 +16,36 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 
-IMAGE_TAG="ghcr.io/xboxdev/nxdk:latest"
+IMAGE_TAG="joypad-tester-nxdk:latest"
+UPSTREAM_TAG="ghcr.io/xboxdev/nxdk:latest"
 JOBS="$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)"
+
+# Compute the build stamp on the host. The Docker mount is xbox/ only
+# (no .git), so we have to inject the SHA via env instead of letting
+# make's in-container git lookup fall back to "nogit". The line 17
+# `cd` above has put us inside xbox/, so the repo root is one level up.
+HOST_BUILD_SHA="$(git -C .. rev-parse --short=7 HEAD 2>/dev/null || echo nogit)"
+if git -C .. diff --quiet 2>/dev/null; then
+    HOST_BUILD_DIRTY=""
+else
+    HOST_BUILD_DIRTY="-dirty"
+fi
+export HOST_BUILD_SHA HOST_BUILD_DIRTY
 
 case "${1:-build}" in
     build|"")
-        docker pull --platform=linux/amd64 "$IMAGE_TAG" >/dev/null 2>&1 || true
+        if ! docker image inspect "$IMAGE_TAG" >/dev/null 2>&1; then
+            echo "[build_docker.sh] Building $IMAGE_TAG (one-time, ~5 min on Apple Silicon via Rosetta)..."
+            docker pull --platform=linux/amd64 "$UPSTREAM_TAG" >/dev/null 2>&1 || true
+            docker build --platform=linux/amd64 -t "$IMAGE_TAG" buildtools/
+        fi
         docker run --rm \
             --platform=linux/amd64 \
             -v "$PWD:/usr/src/app" \
             -w /usr/src/app \
             -u "$(id -u):$(id -g)" \
+            -e HOST_BUILD_SHA \
+            -e HOST_BUILD_DIRTY \
             "$IMAGE_TAG" \
             make -j"$JOBS"
         "$(dirname "$0")/../collect.sh" xbox || true
@@ -37,6 +56,8 @@ case "${1:-build}" in
             -v "$PWD:/usr/src/app" \
             -w /usr/src/app \
             -u "$(id -u):$(id -g)" \
+            -e HOST_BUILD_SHA \
+            -e HOST_BUILD_DIRTY \
             "$IMAGE_TAG" \
             make clean
         ;;

@@ -27,6 +27,10 @@
 typedef enum {
     JT_STYLE_EMPTY = 0,
     JT_STYLE_PAD,
+    JT_STYLE_REMOTE,    /* DVD Movie Playback Kit IR receiver (XREMOTE) */
+    JT_STYLE_KEYBOARD,  /* USB boot-protocol keyboard */
+    JT_STYLE_MOUSE,     /* USB boot-protocol mouse */
+    JT_STYLE_STEEL,     /* Steel Battalion controller (XID bType=0x80) */
     JT_STYLE_OTHER,
 } jt_port_style_t;
 
@@ -40,6 +44,10 @@ typedef enum {
 } jt_slot_kind_t;
 
 typedef struct {
+    /* SDL joystick instance ID -- nxdk pins it to xid_dev->uid so it
+     * doubles as the cheap way to find the underlying XID record (for
+     * the analog-button pressure readout + XID type label). */
+    int32_t  instance_id;
     /* Digital (held) buttons -- packed bitmask, see JT_BTN_* below. */
     uint32_t buttons;
     /* Analog buttons (A/B/X/Y/Black/White) report 0..255 pressure on
@@ -69,6 +77,17 @@ typedef struct {
     uint16_t         vendor_id;
     uint16_t         product_id;
     jt_pad_state_t   pad;
+    /* Daisy-chained second pad on this Xbox port (e.g. an Xbox
+     * controller plugged into another controller's expansion slot
+     * -- PSO did this with USB peripherals). nxdk's SDL XID driver
+     * gives both pads the same player_index (the chassis port they
+     * share), so we keep a secondary slot per port + render the
+     * daisy block stacked under the primary. */
+    bool             has_daisy_pad;
+    char             daisy_product_name[64];
+    uint16_t         daisy_vendor_id;
+    uint16_t         daisy_product_id;
+    jt_pad_state_t   daisy_pad;
     jt_slot_state_t  slots[JT_NUM_SLOTS];
 } jt_port_state_t;
 
@@ -85,8 +104,18 @@ void jt_ports_poll(void);
  * the port has no pad. Edge-based call -- pass 0,0 to stop. */
 void jt_port_rumble(int port_idx, uint16_t strong, uint16_t weak, uint32_t duration_ms);
 
+/* Drive rumble on the daisy-chained pad (if any) at this port. */
+void jt_port_rumble_daisy(int port_idx, uint16_t strong, uint16_t weak, uint32_t duration_ms);
+
 const char *jt_port_style_name(jt_port_style_t s);
 const char *jt_slot_kind_name(jt_slot_kind_t k);
+
+/* Diagnostic: total SDL_CONTROLLERDEVICEADDED + REMOVED events seen
+ * since boot, and a 4-char string showing which slots currently
+ * hold a non-NULL SDL_GameController*. */
+int jt_ports_added_events(void);
+int jt_ports_removed_events(void);
+const char *jt_ports_slot_state(void);
 
 /* Packed digital-button bits. Layout chosen to match the SDL
  * gamecontroller button indices where natural, but the consumer

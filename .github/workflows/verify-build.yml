@@ -192,15 +192,18 @@ jobs:
       - name: Build (Xbox)
         if: matrix.console == 'xbox'
         run: |
-          # nxdk:latest is a 1.5GB amd64 image with the full Xbox SDK
-          # prebuilt. ENTRYPOINT (docker_entry.sh) activates nxdk's
-          # env before running our `make`.
+          # xbox/buildtools/Dockerfile extends nxdk:latest with the
+          # MSC / UAC / HID class drivers enabled, which the upstream
+          # image leaves off. Same image is used by release.yml.
+          docker build --platform=linux/amd64 \
+                       -t joypad-tester-nxdk:verify \
+                       xbox/buildtools/
           docker run --rm \
             --platform=linux/amd64 \
             -v "${{ github.workspace }}":/usr/src/app \
             -w /usr/src/app/xbox \
             -u "$(id -u):$(id -g)" \
-            ghcr.io/xboxdev/nxdk:latest \
+            joypad-tester-nxdk:verify \
             make -j"$(nproc)"
 
       - name: Upload artifacts
