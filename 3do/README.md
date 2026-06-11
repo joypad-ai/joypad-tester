@@ -6,6 +6,10 @@ device on the daisy chain.
 
 ## What it shows
 
+<p align="center">
+  <img src="assets/screenshot.png" alt="3DO Joypad Tester running in Opera (libretro): PAD/MOUSE/STICK/GUN/ARCADE/KEYB rows on positions 1..6" width="600" />
+</p>
+
 One row per detected pod. Layout:
 
 ```
