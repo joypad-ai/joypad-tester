@@ -202,11 +202,7 @@ layout) and `joypad_tester_xbox_v<semver>.iso` to each GitHub Release.
 
 ## Origin / credits
 
-The Joypad Tester source under `xbox/src/` is original. The
-mode-switching scaffold (default tester mode + options menu +
-secondary modes) follows the convention from [top-level
-CLAUDE.md](../CLAUDE.md) shared across every console in this repo.
-
+The Joypad Tester source under `xbox/src/` is original.
 [nxdk](https://github.com/XboxDev/nxdk) and its bundled libusbohci
 (N9H30 USB host stack, Nuvoton 2017) used under their respective
 licenses. See [`LICENSE.md`](LICENSE.md).
